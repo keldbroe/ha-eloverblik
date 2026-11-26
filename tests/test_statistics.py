@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -22,6 +22,7 @@ from custom_components.eloverblik_dk.const import (
     MAX_HISTORY_DAYS,
     MIN_HISTORY_DAYS,
     VERSION,
+    earliest_history_date,
 )
 from custom_components.eloverblik_dk.statistics import (
     StatisticLookupError,
@@ -29,6 +30,7 @@ from custom_components.eloverblik_dk.statistics import (
     async_import_meter_statistics,
     build_statistic_metadata,
     completed_hours,
+    history_cutoff,
     metadata_from_annotations,
     needs_statistic_rebuild,
     plan_incremental_statistics,
@@ -346,11 +348,13 @@ def test_lookup_error_is_an_exception() -> None:
 
 
 def test_default_history_is_half_a_year() -> None:
-    """New installations import 180 days, still bounded by 1 and 365."""
-    assert VERSION == "0.2.0"
+    """New installations import 180 days, bounded by 1 and 1825."""
+    assert VERSION == "0.2.1"
     assert DEFAULT_HISTORY_DAYS == 180
     assert MIN_HISTORY_DAYS == 1
-    assert MAX_HISTORY_DAYS == 365
+    assert MAX_HISTORY_DAYS == 1825
+    assert earliest_history_date(date(2026, 11, 26)) == date(2021, 1, 1)
+    assert earliest_history_date(date(2026, 1, 1)) == date(2021, 1, 1)
 
 
 def test_resolution_labels_match_the_native_interval() -> None:
@@ -577,3 +581,125 @@ async def test_existing_30_day_statistics_backfill_to_a_continuous_180_day_sum(
     assert written == 0
     assert order == ["clear", "add", "add"]
     assert during_calls == 2
+
+
+def _reading_on(year: int, month: int, day: int, kwh: float) -> EnergyReading:
+    return EnergyReading(
+        POINT.metering_point_id,
+        datetime(year, month, day, 0, tzinfo=TZ),
+        timedelta(hours=1),
+        kwh,
+    )
+
+
+def test_history_cutoff_keeps_multi_year_windows_inside_datahub() -> None:
+    """730 and 1825 days stay on or after 1 January five years ago."""
+    assert history_cutoff(NOW, TZ, 730) == date(2024, 11, 26)
+    assert history_cutoff(NOW, TZ, 1825) == date(2021, 11, 27)
+    assert history_cutoff(NOW, TZ, 10000) == earliest_history_date(date(2026, 11, 26))
+    assert history_cutoff(NOW, TZ, 1825) >= earliest_history_date(NOW.date())
+
+
+def test_multi_year_history_needs_a_rebuild_only_when_older_hours_exist() -> None:
+    """Extending 730 stored days to 1825 rewrites once older hours are present."""
+    earliest = datetime(2024, 11, 26, 0, tzinfo=TZ)
+    readings = [
+        _reading_on(2021, 11, 27, 1.0),
+        _reading_on(2024, 11, 26, 1.0),
+    ]
+    assert needs_statistic_rebuild(
+        earliest_start=earliest,
+        readings=readings,
+        history_days=1825,
+        now=NOW,
+        tz=TZ,
+    )
+    assert not needs_statistic_rebuild(
+        earliest_start=earliest,
+        readings=readings,
+        history_days=730,
+        now=NOW,
+        tz=TZ,
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_year_import_keeps_a_continuous_sum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1825 days includes 27 November 2021; 730 days starts on 26 November 2024."""
+    statistic_id = statistic_id_for(POINT.metering_point_id)
+    stored: dict[str, list[dict[str, object]]] = {}
+
+    def get_last(hass, number, statistic_id_arg, convert, types):
+        del hass, number, convert, types
+        rows = stored.get(statistic_id_arg) or []
+        if not rows:
+            return {}
+        newest = max(rows, key=lambda row: row["start"])
+        return {statistic_id_arg: [newest]}
+
+    def during(hass, start, end, statistic_ids, period, units, types):
+        del hass, start, end, period, units, types
+        statistic_id_arg = next(iter(statistic_ids))
+        rows = list(stored.get(statistic_id_arg) or [])
+        if not rows:
+            return {}
+        oldest = min(rows, key=lambda row: row["start"])
+        return {statistic_id_arg: [oldest]}
+
+    def add(hass, metadata, stats):
+        del hass
+        stored[metadata["statistic_id"]] = [dict(row) for row in stats]
+
+    class _Recorder:
+        def async_clear_statistics(self, statistic_ids, *, on_done=None):
+            for cleared_id in statistic_ids:
+                stored.pop(cleared_id, None)
+            if on_done:
+                on_done()
+
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.statistics._load_recorder",
+        lambda: (get_last, add, during, lambda hass: _Recorder()),
+    )
+    readings = [
+        _reading_on(2021, 11, 26, 9.0),
+        _reading_on(2021, 11, 27, 1.0),
+        _reading_on(2024, 11, 25, 2.0),
+        _reading_on(2024, 11, 26, 4.0),
+        _reading_on(2026, 11, 24, 8.0),
+    ]
+    hass = SimpleNamespace(loop=asyncio.get_running_loop())
+
+    async def _import(history_days: int) -> list[dict[str, object]]:
+        stored.clear()
+        written = await async_import_meter_statistics(
+            hass,
+            POINT,
+            readings,
+            history_days=history_days,
+            now=NOW,
+            tz=TZ,
+            mode="rebuild",
+        )
+        assert written == len(stored[statistic_id])
+        return stored[statistic_id]
+
+    five_years = await _import(1825)
+    assert [row["start"].astimezone(TZ).date() for row in five_years] == [
+        date(2021, 11, 27),
+        date(2024, 11, 25),
+        date(2024, 11, 26),
+        date(2026, 11, 24),
+    ]
+    five_sums = [row["sum"] for row in five_years]
+    assert five_sums == pytest.approx([1.0, 3.0, 7.0, 15.0])
+    assert all(later >= earlier for earlier, later in itertools.pairwise(five_sums))
+
+    two_years = await _import(730)
+    assert [row["start"].astimezone(TZ).date() for row in two_years] == [
+        date(2024, 11, 26),
+        date(2026, 11, 24),
+    ]
+    assert [row["sum"] for row in two_years] == pytest.approx([4.0, 12.0])

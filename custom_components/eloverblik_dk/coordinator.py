@@ -36,6 +36,7 @@ from .const import (
     MIN_SCAN_INTERVAL_HOURS,
     NAME,
     TRAILING_REFRESH_DAYS,
+    earliest_history_date,
 )
 from .statistics import (
     ImportMode,
@@ -241,7 +242,9 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
 
         The first poll in a process (and any change of the history option)
         loads the current calendar year, or further back when the statistics
-        backfill asks for it. Later polls only refresh the trailing two weeks.
+        backfill asks for it, stopping at DataHub's retention of the previous
+        five calendar years plus the current year. Later polls only refresh
+        the trailing two weeks.
         """
         history_days = self.history_days
         if self._history_days_loaded != history_days:
@@ -252,6 +255,7 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
             date(today.year, 1, 1),
             today - timedelta(days=history_days),
         )
+        full_start = max(full_start, earliest_history_date(today))
         if not self._has_full_history:
             return full_start, today
         trailing = today - timedelta(days=TRAILING_REFRESH_DAYS)

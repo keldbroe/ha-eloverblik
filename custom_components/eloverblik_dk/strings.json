@@ -35,7 +35,7 @@
       "rate_limited": "ElOverblik is limiting requests right now. Wait a minute, then try again.",
       "unknown": "Something unexpected went wrong while contacting ElOverblik.",
       "no_selection": "Select at least one metering point.",
-      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 365 days."
+      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 1825 days."
     },
     "abort": {
       "already_configured": "This ElOverblik account is already configured.",
@@ -57,13 +57,13 @@
         },
         "data_description": {
           "scan_interval_hours": "How often metering data is fetched. Minimum 1 hour. The default is 6 hours.",
-          "history_days": "How many days are written to the Energy dashboard. Maximum 365 days. The default is 180 days. Increasing this backfills older hours and rewrites the cumulative sum. The rebuild statistics action does the same on demand.",
+          "history_days": "How many days are written to the Energy dashboard. Maximum 1825 days (5 years). The default is 180 days. Increasing this backfills older hours and rewrites the cumulative sum. The rebuild statistics action does the same on demand.",
           "import_statistics": "Writes hourly consumption and export as long-term statistics, so you can pick them under grid consumption and return to grid."
         }
       }
     },
     "error": {
-      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 365 days."
+      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 1825 days."
     }
   },
   "entity": {
