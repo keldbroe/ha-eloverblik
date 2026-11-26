@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from .const import (
-    AGGREGATION_HOUR,
+    AGGREGATION_ACTUAL,
     API_CALLS_PER_MINUTE,
     CONSUMPTION_TYPES,
     EXPORT_TYPES,
@@ -243,7 +243,7 @@ class ElOverblikClient:
         metering_point_ids: Sequence[str],
         date_from: date,
         date_to: date,
-        aggregation: str = AGGREGATION_HOUR,
+        aggregation: str = AGGREGATION_ACTUAL,
         directions: Mapping[str, str] | None = None,
     ) -> list[EnergyReading]:
         """Fetch an inclusive date range, batched by 10 points and 31 days.

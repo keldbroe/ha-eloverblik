@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from homeassistant.const import EntityCategory
@@ -130,6 +130,11 @@ async def test_sensors_expose_consumption_and_export(hass, configured_entry) -> 
 
     assert float(hour.state) == pytest.approx(3.0)
     assert hour.attributes["period_start"] == "2026-11-24T10:00:00+00:00"
+    assert hour.attributes["period_end"] == "2026-11-24T11:00:00+00:00"
+    assert hour.attributes["resolution"] == "PT1H"
+    hour_entry = er.async_get(hass).async_get(hour.entity_id)
+    assert hour_entry is not None
+    assert hour_entry.unique_id == f"{CONSUMPTION.metering_point_id}_latest_hour"
     assert latest.state == "2026-11-24"
     assert latest.attributes["device_class"] == "date"
 
@@ -167,3 +172,69 @@ async def test_sensors_keep_last_value_when_eloverblik_is_rate_limited(
     state = hass.states.get(entity_id)
     assert state.state != "unavailable"
     assert float(state.state) == pytest.approx(7.0)
+
+
+async def test_latest_interval_exposes_quarter_hour_resolution(
+    hass, configured_entry
+) -> None:
+    """PT15M stays on the existing latest-hour entity and reports the quarter."""
+    FakeElOverblikClient.readings = [
+        EnergyReading(
+            CONSUMPTION.metering_point_id,
+            datetime(2026, 11, 24, 10, 30, tzinfo=UTC),
+            timedelta(minutes=15),
+            0.125,
+        ),
+        EnergyReading(
+            CONSUMPTION.metering_point_id,
+            datetime(2026, 11, 24, 10, 45, tzinfo=UTC),
+            timedelta(minutes=15),
+            0.25,
+        ),
+    ]
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    assert await hass.config_entries.async_setup(configured_entry.entry_id)
+    await hass.async_block_till_done()
+
+    hour = hass.states.get(
+        _entity_id(hass, f"{CONSUMPTION.metering_point_id}_latest_hour")
+    )
+    assert float(hour.state) == pytest.approx(0.25)
+    assert hour.attributes["resolution"] == "PT15M"
+    assert hour.attributes["period_start"] == "2026-11-24T10:45:00+00:00"
+    assert hour.attributes["period_end"] == "2026-11-24T11:00:00+00:00"
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get(hour.entity_id).unique_id
+        == f"{CONSUMPTION.metering_point_id}_latest_hour"
+    )
+
+
+async def test_rebuild_statistics_service_fetches_the_full_window(
+    hass, configured_entry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rebuild action reloads the long window and rewrites every point."""
+    modes: list[str] = []
+
+    async def fake_import(hass, point, readings, **kwargs):
+        del hass, point, readings
+        modes.append(kwargs["mode"])
+        return 0
+
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.coordinator.async_import_meter_statistics",
+        fake_import,
+    )
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    assert await hass.config_entries.async_setup(configured_entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = configured_entry.runtime_data.coordinator
+    await coordinator.async_refresh()
+
+    assert FakeElOverblikClient.calls[-1][0] == date(2026, 11, 12)
+    await hass.services.async_call(DOMAIN, "rebuild_statistics", blocking=True)
+    await hass.async_block_till_done()
+
+    assert FakeElOverblikClient.calls[-1][0] == date(2026, 1, 1)
+    assert FakeElOverblikClient.calls[-1][2] == "Actual"
+    assert modes == ["rebuild", "rebuild"]

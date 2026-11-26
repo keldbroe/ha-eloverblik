@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ElOverblikClient
-from .const import CONF_REFRESH_TOKEN
+from .const import CONF_REFRESH_TOKEN, DOMAIN, SERVICE_REBUILD_STATISTICS
 from .coordinator import ElOverblikCoordinator, ElOverblikRuntime
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,6 +21,24 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the integration. Configuration is done in the UI."""
+
+    async def _async_rebuild_statistics(call: ServiceCall) -> None:
+        """Rewrite long-term statistics for every loaded ElOverblik entry."""
+        del call
+        entries = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+        ]
+        if not entries:
+            raise HomeAssistantError("ElOverblik is not loaded")
+        for entry in entries:
+            runtime: ElOverblikRuntime = entry.runtime_data
+            await runtime.coordinator.async_rebuild_statistics()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_REBUILD_STATISTICS, _async_rebuild_statistics
+    )
     return True
 
 

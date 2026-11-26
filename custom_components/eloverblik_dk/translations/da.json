@@ -57,7 +57,7 @@
         },
         "data_description": {
           "scan_interval_hours": "Hvor ofte måledata hentes. Mindst 1 time. Standard er 6 timer.",
-          "history_days": "Hvor mange dage der lægges ind i Energi-dashboardet første gang statistik importeres. Højst 365 dage. En senere forøgelse omskriver ikke timer, der allerede er gemt.",
+          "history_days": "Hvor mange dage der lægges ind i Energi-dashboardet. Højst 365 dage. Standard er 180 dage. Sættes tallet op, hentes de ældre timer ind, og den akkumulerede sum skrives forfra. Handlingen Genopbyg statistik gør det samme, når du beder om det.",
           "import_statistics": "Lægger timeforbrug og -eksport ind som langtidsstatistik, så du kan vælge dem under netforbrug og levering til net."
         }
       }
@@ -94,9 +94,11 @@
         }
       },
       "latest_hour": {
-        "name": "Seneste time",
+        "name": "Seneste interval",
         "state_attributes": {
           "period_start": { "name": "Periodestart" },
+          "period_end": { "name": "Periodeslut" },
+          "resolution": { "name": "Opløsning" },
           "metering_point_id": { "name": "Målepunkt" },
           "metering_point_type": { "name": "Målepunktstype" },
           "type_of_mp": { "name": "DataHub-type" }
@@ -110,6 +112,12 @@
           "type_of_mp": { "name": "DataHub-type" }
         }
       }
+    }
+  },
+  "services": {
+    "rebuild_statistics": {
+      "name": "Genopbyg statistik",
+      "description": "Slet den importerede statistik i Energi-dashboardet, og skriv den igen for den valgte historik (som standard 180 dage) med én sammenhængende akkumuleret sum. Det sker automatisk, når statistikhistorikken sættes op."
     }
   }
 }

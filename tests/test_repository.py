@@ -39,12 +39,12 @@ def test_translation_files_are_valid_and_share_keys() -> None:
 
 
 def test_manifest_and_hacs_metadata() -> None:
-    """Marketplace metadata uses the dedicated domain and the initial version."""
+    """Marketplace metadata uses the dedicated domain and the current version."""
     manifest = json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))
     hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     assert manifest["domain"] == "eloverblik_dk"
     assert manifest["name"] == "ElOverblik (DK)"
-    assert manifest["version"] == "0.1.0"
+    assert manifest["version"] == "0.2.0"
     assert manifest["codeowners"] == ["@keldbroe"]
     assert manifest["config_flow"] is True
     assert manifest["iot_class"] == "cloud_polling"

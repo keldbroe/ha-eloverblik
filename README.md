@@ -9,7 +9,7 @@ Use it to follow:
 
 The domain is `eloverblik_dk`, so it can be installed next to other ElOverblik integrations without taking over their entities.
 
-Hourly values are imported as Home Assistant long-term statistics. In the Energy dashboard, add the consumption series under **Grid consumption** and the export series under **Return to grid**.
+Metering data is requested at DataHub's native resolution (`Actual`: hourly `PT1H` today, and quarter-hour `PT15M` when the metering point provides it). Those intervals are summed into exact UTC clock hours and imported as Home Assistant long-term statistics. In the Energy dashboard, add the consumption series under **Grid consumption** and the export series under **Return to grid**.
 
 ## Create a refresh token
 
@@ -57,7 +57,7 @@ A parent `E17` often has `D07` and `D06` children. Selecting the parent together
 ### Options
 
 - **Update interval:** default 6 hours, minimum 1 hour. ElOverblik data is delayed, so polling faster does not produce newer values and uses the rate limit.
-- **Statistics history:** default 30 days, maximum 365. This is how far back the first statistics import goes.
+- **Statistics history:** default 180 days (half a year), maximum 365. This is how far back statistics are written. Raising the number later backfills the older days and rewrites the cumulative sum. Lowering it leaves hours that were already stored.
 - **Import Energy dashboard statistics:** on by default.
 
 The year and month sensors always use the readings needed for the current calendar year, even when the statistics history is shorter.
@@ -74,9 +74,13 @@ Those statistics are hourly cumulative sums (`sum` and `state`) from the externa
 
 ElOverblik usually publishes a day one to three days after it happens. The **Latest data date** sensor, and the `data_date` attribute on **Latest available day**, show the newest day DataHub has actually delivered. Today and yesterday are often empty. That is the DataHub delay, not a failed update.
 
-Imported hours are appended. An hour that is already stored is not rewritten, so a later correction from DataHub does not move the cumulative sum. To rebuild history, delete the statistic under **Developer tools → Statistics** and reload the integration. Increasing the history option later does not backfill hours that are already recorded.
+Once the configured window is loaded, later polls only append completed hours. They do not rebuild the series. An hour that is already stored is left as it is, so a later correction from DataHub does not move the cumulative sum on its own.
 
-Removing the integration does not delete statistics that were already imported.
+Increasing **Statistics history** backfills the missing older months. The integration clears the external statistic and writes one continuous cumulative sum from the start of the new window through the latest completed hour. The same rewrite is available on demand:
+
+**Developer tools → Actions → ElOverblik (DK): Rebuild statistics** (`eloverblik_dk.rebuild_statistics`).
+
+That action uses the configured history (180 days by default). Removing the integration does not delete statistics that were already imported.
 
 ## Entities
 
@@ -87,16 +91,16 @@ Each metering point is its own device.
 | Latest available day | kWh | Total for the newest day that has data. Attributes: `data_date`, `metering_point_type` (`consumption` or `export`). |
 | This month | kWh | Calendar month so far. `total_increasing`. Can be 0 at the start of a month while data is still delayed. |
 | This year | kWh | Calendar year so far. `total_increasing`. |
-| Latest hour | kWh | Newest hourly value. Attribute: `period_start`. |
+| Latest interval | kWh | Newest native interval (`PT1H` or `PT15M`). Attributes: `resolution`, `period_start`, `period_end`. Unique id: `{metering_point_id}_latest_hour`. |
 | Latest data date | date | Diagnostic. The newest day present in the downloaded series. |
 
-Quarter-hour metering points (`PT15M`) are requested as hourly series and, if DataHub returns 15-minute values, rolled up to clock hours. Gaps are left empty. A quality code of `A02` (not available) is ignored.
+The time series is requested with aggregation `Actual`. DataHub returns `PT1H` for hourly meters and `PT15M` where quarter-hour values are published. A daily `P1D` block, if one is ever returned, is spread evenly across the clock hours it covers. Quarter-hours are summed into the UTC hour they start in (`XX:00:00`), which is the slot Home Assistant's recorder accepts for long-term statistics. Gaps are left empty. A quality code of `A02` (not available) is ignored.
 
 ## How the API is used
 
 - `GET /api/token` exchanges the refresh token for a data-access token. GetToken is limited to 2 calls per minute, so the token is cached until five minutes before it expires and is refreshed once after HTTP 401.
 - `GET /api/meteringpoints/meteringpoints?includeAll=false` loads linked metering points, including child points.
-- `POST /api/meterdata/gettimeseries/{from}/{to}/Hour` loads the series. The body is the swagger object `{"meteringPoints": {"meteringPoint": ["..."]}}`. Calls are batched at 10 metering points and 31 days.
+- `POST /api/meterdata/gettimeseries/{from}/{to}/Actual` loads the series at the meter's own resolution. The body is the swagger object `{"meteringPoints": {"meteringPoint": ["..."]}}`. Calls are batched at 10 metering points and 31 days, so a 180-day window is several requests.
 - The client also keeps a local budget of 25 Customer API calls per minute. HTTP 429 and 503 raise a rate-limit error and are not retried in a loop. The coordinator keeps the last good sensor values and honors `Retry-After`.
 
 Timestamps from DataHub are UTC. Day, month, and year totals use the time zone configured in Home Assistant, which for a Danish home is `Europe/Copenhagen`.

@@ -7,16 +7,21 @@ builder only includes fields the installed ``StatisticMetaData`` declares.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from .api import EnergyReading, MeteringPoint
 from .const import DOMAIN
+
+ImportMode = Literal["auto", "append", "rebuild"]
+_CLEAR_TIMEOUT_SECONDS = 60.0
+_PENDING_REBUILD = "pending_statistic_rebuild"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +38,10 @@ class UsageSummary:
     year_total_kwh: float | None
     latest_hour_start: datetime | None
     latest_hour_kwh: float | None
+    latest_interval_start: datetime | None = None
+    latest_interval_end: datetime | None = None
+    latest_interval_kwh: float | None = None
+    latest_resolution: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +55,75 @@ class PlannedStatistic:
 
 class StatisticLookupError(Exception):
     """The recorder could not be asked for the previous cumulative sum."""
+
+
+def resolution_from_duration(duration: timedelta) -> str:
+    """Return an ISO-8601 duration such as ``PT15M``, ``PT1H``, or ``P1D``."""
+    seconds = int(duration.total_seconds())
+    if seconds <= 0:
+        return "PT0S"
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"P{days}D"
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"PT{hours}H"
+    if seconds % 60 == 0:
+        minutes = seconds // 60
+        return f"PT{minutes}M"
+    return f"PT{seconds}S"
+
+
+def history_cutoff(now: datetime, tz: ZoneInfo, history_days: int) -> date:
+    """Return the first local date included in a statistics window."""
+    return now.astimezone(tz).date() - timedelta(days=history_days)
+
+
+def needs_statistic_rebuild(
+    *,
+    earliest_start: datetime | None,
+    readings: Sequence[EnergyReading],
+    history_days: int,
+    now: datetime,
+    tz: ZoneInfo,
+) -> bool:
+    """Return whether stored statistics start later than the requested window.
+
+    A rebuild is required when the recorder's oldest hour is newer than the
+    history cutoff and the fetched series actually contains an earlier hour.
+    Missing DataHub history is not a rebuild: there is nothing older to add,
+    and repeating a clear on every poll would rewrite the same sums.
+    """
+    if earliest_start is None:
+        return False
+    cutoff = history_cutoff(now, tz, history_days)
+    if earliest_start.astimezone(tz).date() <= cutoff:
+        return False
+    earliest_hour = floor_utc_hour(earliest_start)
+    return any(
+        reading.start.astimezone(tz).date() >= cutoff
+        and floor_utc_hour(reading.start) < earliest_hour
+        for reading in readings
+    )
+
+
+def request_statistic_rebuild(hass: Any, entry_id: str) -> None:
+    """Remember that the next import for ``entry_id`` must rewrite statistics."""
+    pending = hass.data.setdefault(DOMAIN, {}).setdefault(_PENDING_REBUILD, set())
+    pending.add(entry_id)
+
+
+def statistic_rebuild_requested(hass: Any, entry_id: str) -> bool:
+    """Return whether options flow asked for a statistics rebuild."""
+    pending = (hass.data.get(DOMAIN) or {}).get(_PENDING_REBUILD, ())
+    return entry_id in pending
+
+
+def clear_statistic_rebuild(hass: Any, entry_id: str) -> None:
+    """Drop a pending rebuild request after it has been applied."""
+    pending = (hass.data.get(DOMAIN) or {}).get(_PENDING_REBUILD)
+    if isinstance(pending, set):
+        pending.discard(entry_id)
 
 
 def floor_utc_hour(moment: datetime) -> datetime:
@@ -164,6 +242,7 @@ def summarize_usage(
     else:
         latest_hour_start = None
         latest_hour_kwh = None
+    latest_reading = max(readings, key=lambda item: item.start)
     return UsageSummary(
         latest_data_date=latest,
         day_total_kwh=_round_kwh(by_date[latest]),
@@ -171,6 +250,10 @@ def summarize_usage(
         year_total_kwh=_round_kwh(year_total),
         latest_hour_start=latest_hour_start,
         latest_hour_kwh=latest_hour_kwh,
+        latest_interval_start=latest_reading.start,
+        latest_interval_end=latest_reading.start + latest_reading.duration,
+        latest_interval_kwh=_round_kwh(latest_reading.kwh),
+        latest_resolution=resolution_from_duration(latest_reading.duration),
     )
 
 
@@ -239,28 +322,52 @@ async def async_import_meter_statistics(
     history_days: int,
     now: datetime,
     tz: ZoneInfo,
+    mode: ImportMode = "auto",
 ) -> int:
-    """Import completed hours that are newer than the stored cumulative sum."""
+    """Import completed hours, rebuilding the cumulative sum when history grows.
+
+    ``append`` continues after the newest stored hour and is what the 6-hour
+    poll uses once a full window is in place. ``rebuild`` clears the external
+    statistic and writes one continuous sum across the configured window.
+    ``auto`` rebuilds only when the oldest stored hour is newer than that
+    window and older readings are actually available. A lookup or clear
+    failure returns ``-1`` so the caller can retry without treating the
+    window as up to date.
+    """
     statistic_id = statistic_id_for(point.metering_point_id)
     try:
-        last_start, last_sum = await _read_last_sum(hass, statistic_id)
+        if mode == "append":
+            last_start, last_sum = await _read_last_sum(hass, statistic_id)
+            earliest: datetime | None = last_start
+        else:
+            last_start, last_sum, earliest = await _read_bounds(hass, statistic_id)
     except StatisticLookupError:
         _LOGGER.warning(
             "Skipping statistics import for %s until the recorder can be read",
             point.metering_point_id,
         )
-        return 0
-    window = readings
-    if last_start is None:
-        cutoff = now.astimezone(tz).date() - timedelta(days=history_days)
-        window = [
-            reading
-            for reading in readings
-            if reading.start.astimezone(tz).date() >= cutoff
-        ]
+        return -1
+    replace = mode == "rebuild" or (
+        mode == "auto"
+        and needs_statistic_rebuild(
+            earliest_start=earliest,
+            readings=readings,
+            history_days=history_days,
+            now=now,
+            tz=tz,
+        )
+    )
+    if replace or last_start is None:
+        window = _history_window(readings, history_days=history_days, now=now, tz=tz)
+        baseline_start: datetime | None = None
+        baseline_sum = 0.0
+    else:
+        window = readings
+        baseline_start = last_start
+        baseline_sum = last_sum
     hourly = completed_hours(aggregate_hourly(window), now=now.astimezone(UTC))
     planned = plan_incremental_statistics(
-        hourly, last_start=last_start, last_sum=last_sum
+        hourly, last_start=baseline_start, last_sum=baseline_sum
     )
     if not planned:
         return 0
@@ -269,45 +376,167 @@ async def async_import_meter_statistics(
         {"start": item.start, "state": item.state, "sum": item.sum} for item in planned
     ]
     try:
-        _, add_external = _load_recorder()
+        _, add_external, _, _ = _load_recorder()
     except ImportError:
         _LOGGER.warning("Recorder statistics API is not available")
-        return 0
+        return -1
+    if replace:
+        cleared = await _async_clear_external_statistic(hass, statistic_id)
+        if not cleared:
+            return -1
     add_external(hass, metadata, stats)
-    _LOGGER.debug(
-        "Imported %s hourly statistics for %s, continuing from %s kWh",
-        len(stats),
-        point.metering_point_id,
-        last_sum,
-    )
+    if replace:
+        _LOGGER.info(
+            "Rebuilt %s hourly statistics for %s from %s",
+            len(stats),
+            point.metering_point_id,
+            stats[0]["start"].isoformat(),
+        )
+    else:
+        _LOGGER.debug(
+            "Imported %s hourly statistics for %s, continuing from %s kWh",
+            len(stats),
+            point.metering_point_id,
+            baseline_sum,
+        )
     return len(stats)
 
 
+def _history_window(
+    readings: Sequence[EnergyReading],
+    *,
+    history_days: int,
+    now: datetime,
+    tz: ZoneInfo,
+) -> list[EnergyReading]:
+    """Keep readings on or after the first day of the statistics window."""
+    cutoff = history_cutoff(now, tz, history_days)
+    return [
+        reading for reading in readings if reading.start.astimezone(tz).date() >= cutoff
+    ]
+
+
 async def _read_last_sum(hass: Any, statistic_id: str) -> tuple[datetime | None, float]:
-    """Load the previous sum, running a synchronous lookup in the executor."""
+    """Load the newest sum, running a synchronous lookup in the executor."""
     try:
-        get_last_statistics, _ = _load_recorder()
+        get_last_statistics, _, _, _ = _load_recorder()
     except ImportError as err:
         raise StatisticLookupError("Recorder statistics are unavailable") from err
     try:
-        if _is_async(get_last_statistics):
-            result = await get_last_statistics(
-                hass, 1, statistic_id, True, {"sum", "state"}
-            )
-        elif hasattr(hass, "async_add_executor_job"):
-            result = await hass.async_add_executor_job(
-                get_last_statistics,
-                hass,
-                1,
-                statistic_id,
-                True,
-                {"sum", "state"},
-            )
-        else:
-            result = get_last_statistics(hass, 1, statistic_id, True, {"sum", "state"})
+        result = await _invoke(
+            hass,
+            get_last_statistics,
+            hass,
+            1,
+            statistic_id,
+            True,
+            {"sum", "state"},
+        )
     except Exception as err:
         raise StatisticLookupError("Could not read the previous statistic") from err
     return _last_sum_from_result(result, statistic_id)
+
+
+async def _read_bounds(
+    hass: Any, statistic_id: str
+) -> tuple[datetime | None, float, datetime | None]:
+    """Load the newest sum and the oldest stored hour for one statistic."""
+    last_start, last_sum = await _read_last_sum(hass, statistic_id)
+    try:
+        _, _, during_period, _ = _load_recorder()
+    except ImportError as err:
+        raise StatisticLookupError("Recorder statistics are unavailable") from err
+    if during_period is None:
+        return last_start, last_sum, None
+    try:
+        result = await _invoke(
+            hass,
+            during_period,
+            hass,
+            datetime(2000, 1, 1, tzinfo=UTC),
+            None,
+            {statistic_id},
+            "hour",
+            None,
+            {"sum"},
+        )
+    except Exception as err:
+        raise StatisticLookupError("Could not read the oldest statistic") from err
+    return last_start, last_sum, _earliest_start(result, statistic_id)
+
+
+def _earliest_start(
+    result: Mapping[str, Sequence[Mapping[str, Any]]] | None, statistic_id: str
+) -> datetime | None:
+    """Return the oldest start timestamp in a statistics result."""
+    rows = list((result or {}).get(statistic_id) or [])
+    if not rows:
+        return None
+    row = min(rows, key=lambda item: _coerce_utc(item["start"]))
+    return _coerce_utc(row["start"])
+
+
+async def _async_clear_external_statistic(hass: Any, statistic_id: str) -> bool:
+    """Delete one external statistic and wait until the recorder has finished.
+
+    ``Recorder.async_clear_statistics`` removes the statistic metadata and its
+    rows. ``async_add_external_statistics`` then inserts a new series. The
+    import is queued only after that clear has finished: a clear still waiting
+    on the recorder queue would delete the rows just written, and updating
+    rows in place leaves any hour that was not rewritten on the old cumulative
+    ``sum``. The Energy dashboard differences those sums, so a leftover smaller
+    sum becomes a negative hour. A time-range clear is not used, because it
+    deletes rows without rebuilding the sums that follow them.
+    """
+    try:
+        _, _, _, get_instance = _load_recorder()
+    except ImportError:
+        _LOGGER.warning("Recorder is not available; statistics were not cleared")
+        return False
+    try:
+        clear = get_instance(hass).async_clear_statistics
+    except Exception:
+        _LOGGER.warning(
+            "Recorder is not ready; leaving statistics for %s unchanged",
+            statistic_id,
+        )
+        return False
+    if _is_async(clear):
+        await clear([statistic_id])
+        return True
+    done = asyncio.Event()
+
+    def _finished() -> None:
+        loop = getattr(hass, "loop", None)
+        if loop is None:
+            done.set()
+            return
+        loop.call_soon_threadsafe(done.set)
+
+    try:
+        clear([statistic_id], on_done=_finished)
+    except TypeError:
+        clear([statistic_id])
+        return True
+    try:
+        async with asyncio.timeout(_CLEAR_TIMEOUT_SECONDS):
+            await done.wait()
+    except TimeoutError:
+        _LOGGER.warning(
+            "Timed out clearing statistics for %s; the series was not rewritten",
+            statistic_id,
+        )
+        return False
+    return True
+
+
+async def _invoke(hass: Any, func: Any, *args: Any) -> Any:
+    """Call a recorder helper, moving a synchronous one off the event loop."""
+    if _is_async(func):
+        return await func(*args)
+    if hasattr(hass, "async_add_executor_job"):
+        return await hass.async_add_executor_job(func, *args)
+    return func(*args)
 
 
 def _last_sum_from_result(
@@ -332,9 +561,15 @@ def _coerce_utc(value: datetime | int | float) -> datetime:
     return datetime.fromtimestamp(timestamp, tz=UTC)
 
 
-def _load_recorder() -> tuple[Any, Any]:
-    module = importlib.import_module("homeassistant.components.recorder.statistics")
-    return module.get_last_statistics, module.async_add_external_statistics
+def _load_recorder() -> tuple[Any, Any, Any, Any]:
+    statistics = importlib.import_module("homeassistant.components.recorder.statistics")
+    recorder = importlib.import_module("homeassistant.components.recorder")
+    return (
+        statistics.get_last_statistics,
+        statistics.async_add_external_statistics,
+        statistics.statistics_during_period,
+        recorder.get_instance,
+    )
 
 
 def _is_async(func: Any) -> bool:

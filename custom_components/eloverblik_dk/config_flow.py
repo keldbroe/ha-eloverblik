@@ -41,6 +41,7 @@ from .const import (
     MIN_SCAN_INTERVAL_HOURS,
     NAME,
 )
+from .statistics import request_statistic_rebuild
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -289,6 +290,12 @@ class ElOverblikOptionsFlow(OptionsFlow):
                 if not hours_ok or not days_ok:
                     errors["base"] = "invalid_option"
                 else:
+                    previous = _option_int(
+                        self.config_entry.options.get(CONF_HISTORY_DAYS),
+                        DEFAULT_HISTORY_DAYS,
+                    )
+                    if days > previous:
+                        request_statistic_rebuild(self.hass, self.config_entry.entry_id)
                     return self.async_create_entry(
                         title="",
                         data={
@@ -331,3 +338,11 @@ class ElOverblikOptionsFlow(OptionsFlow):
         if hasattr(self, "add_suggested_values_to_schema"):
             schema = self.add_suggested_values_to_schema(schema, suggested)
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+
+
+def _option_int(value: Any, default: int) -> int:
+    """Return an option as an int, or the default when it is unset."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
