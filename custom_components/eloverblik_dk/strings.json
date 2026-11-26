@@ -1,0 +1,115 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to ElOverblik",
+        "description": "Paste a refresh token from [eloverblik.dk](https://eloverblik.dk/welcome). Open Datadeling, create a token for the metering points you want to share, and paste it here. The token stays valid for up to a year.",
+        "data": {
+          "refresh_token": "Refresh token"
+        },
+        "data_description": {
+          "refresh_token": "Created under Datadeling on eloverblik.dk. It is stored in Home Assistant and used only to read your own DataHub metering data."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update the refresh token",
+        "description": "ElOverblik rejected the refresh token for {name}. It has expired or been revoked. Create a new one under Datadeling on eloverblik.dk and paste it here.",
+        "data": {
+          "refresh_token": "Refresh token"
+        },
+        "data_description": {
+          "refresh_token": "The new token replaces the one that stopped working. Your selected metering points are kept."
+        }
+      },
+      "metering_points": {
+        "title": "Choose metering points",
+        "description": "Consumption is electricity bought from the grid. Export/sale is electricity delivered to the grid, for example from solar panels. If a parent point and its children are both listed, prefer the children (D07 for grid consumption and D06 for export) so the Energy dashboard does not count the same electricity twice.",
+        "data": {
+          "metering_point_ids": "Metering points"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "ElOverblik rejected the refresh token. Create a new one under Datadeling on eloverblik.dk.",
+      "cannot_connect": "Home Assistant could not reach ElOverblik, or ElOverblik returned an error. Wait a moment and try again.",
+      "rate_limited": "ElOverblik is limiting requests right now. Wait a minute, then try again.",
+      "unknown": "Something unexpected went wrong while contacting ElOverblik.",
+      "no_selection": "Select at least one metering point.",
+      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 365 days."
+    },
+    "abort": {
+      "already_configured": "This ElOverblik account is already configured.",
+      "already_in_progress": "This ElOverblik account is already being configured.",
+      "reauth_successful": "The refresh token was updated.",
+      "no_metering_points": "This account has no linked metering points. Link a metering point on eloverblik.dk and try again.",
+      "unique_id_mismatch": "The new token belongs to a different ElOverblik account."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ElOverblik options",
+        "description": "ElOverblik publishes metering data with a delay of about one to three days. Polling every few hours is enough and stays inside Energinet's rate limits.",
+        "data": {
+          "scan_interval_hours": "Update interval (hours)",
+          "history_days": "Statistics history (days)",
+          "import_statistics": "Import Energy dashboard statistics"
+        },
+        "data_description": {
+          "scan_interval_hours": "How often metering data is fetched. Minimum 1 hour. The default is 6 hours.",
+          "history_days": "How many days are written to the Energy dashboard the first time statistics are imported. Maximum 365 days. Later increases do not rewrite hours that are already stored.",
+          "import_statistics": "Writes hourly consumption and export as long-term statistics, so you can pick them under grid consumption and return to grid."
+        }
+      }
+    },
+    "error": {
+      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 365 days."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "day_total": {
+        "name": "Latest available day",
+        "state_attributes": {
+          "data_date": { "name": "Data date" },
+          "metering_point_id": { "name": "Metering point" },
+          "metering_point_type": { "name": "Metering point type" },
+          "type_of_mp": { "name": "DataHub type" }
+        }
+      },
+      "month_total": {
+        "name": "This month",
+        "state_attributes": {
+          "metering_point_id": { "name": "Metering point" },
+          "metering_point_type": { "name": "Metering point type" },
+          "type_of_mp": { "name": "DataHub type" }
+        }
+      },
+      "year_total": {
+        "name": "This year",
+        "state_attributes": {
+          "metering_point_id": { "name": "Metering point" },
+          "metering_point_type": { "name": "Metering point type" },
+          "type_of_mp": { "name": "DataHub type" }
+        }
+      },
+      "latest_hour": {
+        "name": "Latest hour",
+        "state_attributes": {
+          "period_start": { "name": "Period start" },
+          "metering_point_id": { "name": "Metering point" },
+          "metering_point_type": { "name": "Metering point type" },
+          "type_of_mp": { "name": "DataHub type" }
+        }
+      },
+      "latest_data_date": {
+        "name": "Latest data date",
+        "state_attributes": {
+          "metering_point_id": { "name": "Metering point" },
+          "metering_point_type": { "name": "Metering point type" },
+          "type_of_mp": { "name": "DataHub type" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "result": [
+    {
+      "meteringPointId": "571313174000000017",
+      "typeOfMP": "E17",
+      "balanceSupplierName": "Eksempel Energi A/S",
+      "streetCode": "1234",
+      "streetName": "Nørregade",
+      "buildingNumber": "12",
+      "floorId": "2",
+      "roomId": "tv",
+      "postcode": "8000",
+      "cityName": "Aarhus C",
+      "citySubDivisionName": "",
+      "municipalityCode": "751",
+      "locationDescription": "Installation",
+      "settlementMethod": "D01",
+      "meterReadingOccurrence": "PT1H",
+      "firstConsumerPartyName": "Test Kunden",
+      "secondConsumerPartyName": "",
+      "meterNumber": "445566",
+      "consumerStartDate": "2020-01-01T00:00:00.000+00:00",
+      "hasRelation": true,
+      "childMeteringPoints": [
+        {
+          "parentMeteringPointId": "571313174000000017",
+          "meteringPointId": "571313174000000077",
+          "typeOfMP": "D07",
+          "meterReadingOccurrence": "PT15M",
+          "meterNumber": "445566-D07"
+        },
+        {
+          "parentMeteringPointId": "571313174000000017",
+          "meteringPointId": "571313174000000066",
+          "typeOfMP": "D06",
+          "meterReadingOccurrence": "PT15M",
+          "meterNumber": "445566-D06"
+        }
+      ]
+    },
+    {
+      "meteringPointId": "571313174000000018",
+      "typeOfMP": "E18",
+      "streetName": "Havnegade",
+      "buildingNumber": "3",
+      "postcode": "5000",
+      "cityName": "Odense C",
+      "meterReadingOccurrence": "PT1H",
+      "hasRelation": true,
+      "childMeteringPoints": []
+    },
+    {
+      "meteringPointId": "571313174000000001",
+      "typeOfMP": "D01",
+      "streetName": "Solvænget",
+      "buildingNumber": "8",
+      "postcode": "2200",
+      "cityName": "København N",
+      "meterReadingOccurrence": "PT15M",
+      "hasRelation": true
+    },
+    {
+      "meteringPointId": "571313174000000012",
+      "typeOfMP": "D12",
+      "streetName": "Algade",
+      "buildingNumber": "1",
+      "postcode": "4000",
+      "cityName": "Roskilde",
+      "meterReadingOccurrence": "PT1H",
+      "hasRelation": true
+    },
+    {
+      "meteringPointId": "571313174000000009",
+      "typeOfMP": "D09",
+      "streetName": "Skovvej",
+      "buildingNumber": "4",
+      "postcode": "7100",
+      "cityName": "Vejle",
+      "meterReadingOccurrence": "PT1H",
+      "hasRelation": true
+    },
+    {
+      "meteringPointId": "571313174000000011",
+      "typeOfMP": "D11",
+      "streetName": "Strandvejen",
+      "buildingNumber": "19",
+      "postcode": "2900",
+      "cityName": "Hellerup",
+      "meterReadingOccurrence": "PT15M",
+      "hasRelation": true
+    }
+  ]
+}

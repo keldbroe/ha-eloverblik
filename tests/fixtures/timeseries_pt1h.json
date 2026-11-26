@@ -1,0 +1,165 @@
+{
+  "result": [
+    {
+      "success": true,
+      "errorCode": 10000,
+      "errorText": "",
+      "id": "571313174000000017",
+      "stackTrace": null,
+      "MyEnergyData_MarketDocument": {
+        "mRID": "571313174000000017",
+        "createdDateTime": "2026-11-25T06:12:00Z",
+        "sender_MarketParticipant.name": "Energinet",
+        "sender_MarketParticipant.mRID": {
+          "codingScheme": "A10",
+          "name": "5790001330583"
+        },
+        "period.timeInterval": {
+          "start": "2026-11-22T23:00:00Z",
+          "end": "2026-11-23T23:00:00Z"
+        },
+        "TimeSeries": [
+          {
+            "mRID": "571313174000000017",
+            "businessType": "A64",
+            "curveType": "A01",
+            "measurement_Unit.name": "KWH",
+            "MarketEvaluationPoint": {
+              "mRID": {
+                "codingScheme": "A10",
+                "name": "571313174000000017"
+              }
+            },
+            "Period": [
+              {
+                "resolution": "PT1H",
+                "timeInterval": {
+                  "start": "2026-11-22T23:00:00Z",
+                  "end": "2026-11-23T05:00:00Z"
+                },
+                "Point": [
+                  {
+                    "position": "1",
+                    "out_Quantity.quantity": "9.999",
+                    "out_Quantity.quality": "A04"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "mRID": "571313174000000017",
+            "businessType": "A04",
+            "curveType": "A01",
+            "measurement_Unit.name": "KWH",
+            "MarketEvaluationPoint": {
+              "mRID": {
+                "codingScheme": "A10",
+                "name": "571313174000000017"
+              }
+            },
+            "Period": [
+              {
+                "resolution": "PT1H",
+                "timeInterval": {
+                  "start": "2026-11-22T23:00:00Z",
+                  "end": "2026-11-23T05:00:00Z"
+                },
+                "Point": [
+                  {
+                    "position": "1",
+                    "out_Quantity.quantity": "0.420",
+                    "out_Quantity.quality": "A04"
+                  },
+                  {
+                    "position": "2",
+                    "out_Quantity.quantity": "0.380",
+                    "out_Quantity.quality": "A04"
+                  },
+                  {
+                    "position": "4",
+                    "out_Quantity.quantity": "0",
+                    "out_Quantity.quality": "A02"
+                  },
+                  {
+                    "position": "5",
+                    "out_Quantity.quantity": "1.250",
+                    "out_Quantity.quality": "A03"
+                  },
+                  {
+                    "position": "6",
+                    "out_Quantity.quantity": "0.510",
+                    "out_Quantity.quality": "A04"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "success": false,
+      "errorCode": 30015,
+      "errorText": "No data available",
+      "id": "571313174000000099",
+      "stackTrace": null,
+      "MyEnergyData_MarketDocument": null
+    },
+    {
+      "success": true,
+      "errorCode": 10000,
+      "errorText": "",
+      "id": "571313174000000018",
+      "stackTrace": null,
+      "MyEnergyData_MarketDocument": {
+        "mRID": "571313174000000018",
+        "createdDateTime": "2026-11-25T06:12:00Z",
+        "sender_MarketParticipant.name": "Energinet",
+        "sender_MarketParticipant.mRID": {
+          "codingScheme": "A10",
+          "name": "5790001330583"
+        },
+        "period.timeInterval": {
+          "start": "2026-11-22T23:00:00Z",
+          "end": "2026-11-23T01:00:00Z"
+        },
+        "TimeSeries": [
+          {
+            "mRID": "571313174000000018",
+            "businessType": "A01",
+            "curveType": "A01",
+            "measurement_Unit.name": "KWH",
+            "MarketEvaluationPoint": {
+              "mRID": {
+                "codingScheme": "A10",
+                "name": "571313174000000018"
+              }
+            },
+            "Period": [
+              {
+                "resolution": "PT1H",
+                "timeInterval": {
+                  "start": "2026-11-22T23:00:00Z",
+                  "end": "2026-11-23T01:00:00Z"
+                },
+                "Point": [
+                  {
+                    "position": "1",
+                    "out_Quantity.quantity": "0.100",
+                    "out_Quantity.quality": "A04"
+                  },
+                  {
+                    "position": "2",
+                    "out_Quantity.quantity": "0.200",
+                    "out_Quantity.quality": "A04"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

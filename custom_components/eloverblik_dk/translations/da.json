@@ -1,0 +1,115 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Forbind til ElOverblik",
+        "description": "Indsæt et refresh-token fra [eloverblik.dk](https://eloverblik.dk/welcome). Åbn Datadeling, opret et token for de målepunkter, du vil dele, og indsæt det her. Tokenet gælder i op til et år.",
+        "data": {
+          "refresh_token": "Refresh-token"
+        },
+        "data_description": {
+          "refresh_token": "Oprettes under Datadeling på eloverblik.dk. Det gemmes i Home Assistant og bruges kun til at hente dine egne måledata fra DataHub."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opdater refresh-token",
+        "description": "ElOverblik afviste refresh-tokenet for {name}. Det er udløbet eller tilbagekaldt. Opret et nyt under Datadeling på eloverblik.dk, og indsæt det her.",
+        "data": {
+          "refresh_token": "Refresh-token"
+        },
+        "data_description": {
+          "refresh_token": "Det nye token erstatter det, der ikke virker længere. De valgte målepunkter beholdes."
+        }
+      },
+      "metering_points": {
+        "title": "Vælg målepunkter",
+        "description": "Forbrug er strøm købt fra nettet. Salg/eksport er strøm leveret til nettet, for eksempel fra solceller. Hvis både et overordnet målepunkt og dets undermålepunkter vises, så vælg undermålepunkterne (D07 til forbrug fra net og D06 til salg), så Energi-dashboardet ikke tæller den samme strøm med to gange.",
+        "data": {
+          "metering_point_ids": "Målepunkter"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "ElOverblik afviste refresh-tokenet. Opret et nyt under Datadeling på eloverblik.dk.",
+      "cannot_connect": "Home Assistant kunne ikke nå ElOverblik, eller ElOverblik returnerede en fejl. Vent et øjeblik, og prøv igen.",
+      "rate_limited": "ElOverblik begrænser antallet af kald lige nu. Vent et minut, og prøv igen.",
+      "unknown": "Der opstod en uventet fejl under kontakt til ElOverblik.",
+      "no_selection": "Vælg mindst ét målepunkt.",
+      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 365 dage."
+    },
+    "abort": {
+      "already_configured": "Denne ElOverblik-konto er allerede tilføjet.",
+      "already_in_progress": "Denne ElOverblik-konto er allerede ved at blive tilføjet.",
+      "reauth_successful": "Refresh-tokenet er opdateret.",
+      "no_metering_points": "Der er ingen tilknyttede målepunkter på kontoen. Knyt et målepunkt til kontoen på eloverblik.dk, og prøv igen.",
+      "unique_id_mismatch": "Det nye token hører til en anden ElOverblik-konto."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Indstillinger for ElOverblik",
+        "description": "ElOverblik offentliggør måledata med en forsinkelse på typisk et til tre døgn. Det er nok at hente data med nogle timers mellemrum, og det holder os inden for Energinets grænser.",
+        "data": {
+          "scan_interval_hours": "Opdateringsinterval (timer)",
+          "history_days": "Statistikhistorik (dage)",
+          "import_statistics": "Importér statistik til Energi-dashboardet"
+        },
+        "data_description": {
+          "scan_interval_hours": "Hvor ofte måledata hentes. Mindst 1 time. Standard er 6 timer.",
+          "history_days": "Hvor mange dage der lægges ind i Energi-dashboardet første gang statistik importeres. Højst 365 dage. En senere forøgelse omskriver ikke timer, der allerede er gemt.",
+          "import_statistics": "Lægger timeforbrug og -eksport ind som langtidsstatistik, så du kan vælge dem under netforbrug og levering til net."
+        }
+      }
+    },
+    "error": {
+      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 365 dage."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "day_total": {
+        "name": "Seneste tilgængelige døgn",
+        "state_attributes": {
+          "data_date": { "name": "Datadato" },
+          "metering_point_id": { "name": "Målepunkt" },
+          "metering_point_type": { "name": "Målepunktstype" },
+          "type_of_mp": { "name": "DataHub-type" }
+        }
+      },
+      "month_total": {
+        "name": "Denne måned",
+        "state_attributes": {
+          "metering_point_id": { "name": "Målepunkt" },
+          "metering_point_type": { "name": "Målepunktstype" },
+          "type_of_mp": { "name": "DataHub-type" }
+        }
+      },
+      "year_total": {
+        "name": "I år",
+        "state_attributes": {
+          "metering_point_id": { "name": "Målepunkt" },
+          "metering_point_type": { "name": "Målepunktstype" },
+          "type_of_mp": { "name": "DataHub-type" }
+        }
+      },
+      "latest_hour": {
+        "name": "Seneste time",
+        "state_attributes": {
+          "period_start": { "name": "Periodestart" },
+          "metering_point_id": { "name": "Målepunkt" },
+          "metering_point_type": { "name": "Målepunktstype" },
+          "type_of_mp": { "name": "DataHub-type" }
+        }
+      },
+      "latest_data_date": {
+        "name": "Seneste datadato",
+        "state_attributes": {
+          "metering_point_id": { "name": "Målepunkt" },
+          "metering_point_type": { "name": "Målepunktstype" },
+          "type_of_mp": { "name": "DataHub-type" }
+        }
+      }
+    }
+  }
+}
