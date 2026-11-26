@@ -57,7 +57,7 @@ A parent `E17` often has `D07` and `D06` children. Selecting the parent together
 ### Options
 
 - **Update interval:** default 6 hours, minimum 1 hour. ElOverblik data is delayed, so polling faster does not produce newer values and uses the rate limit.
-- **Statistics history:** default 180 days (half a year), maximum 365. This is how far back statistics are written. Raising the number later backfills the older days and rewrites the cumulative sum. Lowering it leaves hours that were already stored.
+- **Statistics history:** default 180 days (half a year), maximum 1825 (5 years, inside DataHub's retention of the previous five calendar years plus the current year). This is how far back statistics are written. Raising the number later backfills the older days and rewrites the cumulative sum. The first multi-year import is paced at 25 API calls per minute, so it takes a few minutes. Lowering the number leaves hours that were already stored.
 - **Import Energy dashboard statistics:** on by default.
 
 The year and month sensors always use the readings needed for the current calendar year, even when the statistics history is shorter.
@@ -100,8 +100,9 @@ The time series is requested with aggregation `Actual`. DataHub returns `PT1H` f
 
 - `GET /api/token` exchanges the refresh token for a data-access token. GetToken is limited to 2 calls per minute, so the token is cached until five minutes before it expires and is refreshed once after HTTP 401.
 - `GET /api/meteringpoints/meteringpoints?includeAll=false` loads linked metering points, including child points.
-- `POST /api/meterdata/gettimeseries/{from}/{to}/Actual` loads the series at the meter's own resolution. The body is the swagger object `{"meteringPoints": {"meteringPoint": ["..."]}}`. Calls are batched at 10 metering points and 31 days, so a 180-day window is several requests.
-- The client also keeps a local budget of 25 Customer API calls per minute. HTTP 429 and 503 raise a rate-limit error and are not retried in a loop. The coordinator keeps the last good sensor values and honors `Retry-After`.
+- `POST /api/meterdata/gettimeseries/{from}/{to}/Actual` loads the series at the meter's own resolution. The body is the swagger object `{"meteringPoints": {"meteringPoint": ["..."]}}`. Calls are batched at 10 metering points and 31 days. A 180-day window is several requests, 730 days is 24 requests, and 1825 days is 59 requests.
+- DataHub returns time series for the previous five calendar years plus the current year, from 1 January of that first year. The client moves an earlier start forward to that day. A range that ends before it is skipped.
+- The client also keeps a local budget of 25 Customer API calls per minute. A backfill that needs more than 25 requests waits until the next minute opens, with one extra second so the next burst is in the following window. A five-year import of about 59 requests therefore finishes across a few minutes. HTTP 429 and 503 raise a rate-limit error and are not retried in a loop. The coordinator keeps the last good sensor values and honors `Retry-After`.
 
 Timestamps from DataHub are UTC. Day, month, and year totals use the time zone configured in Home Assistant, which for a Danish home is `Europe/Copenhagen`.
 

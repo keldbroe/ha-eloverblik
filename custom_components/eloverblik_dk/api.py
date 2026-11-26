@@ -19,7 +19,7 @@ import re
 import time
 from base64 import urlsafe_b64decode
 from collections import deque
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
@@ -32,17 +32,20 @@ from .const import (
     AGGREGATION_ACTUAL,
     API_CALLS_PER_MINUTE,
     CONSUMPTION_TYPES,
+    DATAHUB_HISTORY_YEARS,
     EXPORT_TYPES,
     MAX_DAYS_PER_CALL,
     MAX_METERING_POINTS_PER_CALL,
     METERING_POINTS_URL,
     RATE_LIMIT_COOLDOWN_SECONDS,
+    RATE_LIMIT_WINDOW_SLACK_SECONDS,
     TIME_SERIES_URL,
     TOKEN_CALLS_PER_MINUTE,
     TOKEN_LIFETIME,
     TOKEN_REFRESH_SKEW,
     TOKEN_URL,
     USER_AGENT,
+    earliest_history_date,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -172,27 +175,58 @@ class EnergyReading:
 class AsyncIntervalLimiter:
     """Sliding-window limiter. Callers wait instead of bursting past the budget."""
 
-    def __init__(self, max_calls: int, period_seconds: float) -> None:
-        """Limit ``max_calls`` acquisitions inside each ``period_seconds`` window."""
+    def __init__(
+        self,
+        max_calls: int,
+        period_seconds: float,
+        *,
+        slack_seconds: float = 0.0,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
+        """Limit ``max_calls`` acquisitions inside each ``period_seconds`` window.
+
+        ``slack_seconds`` is added to each wait so the next call starts after
+        the oldest one has left the window. ``clock`` and ``sleep`` default to
+        the monotonic clock and ``asyncio.sleep``.
+        """
         if max_calls < 1:
             raise ValueError("max_calls must be positive")
+        if period_seconds <= 0:
+            raise ValueError("period_seconds must be positive")
+        if slack_seconds < 0:
+            raise ValueError("slack_seconds must be non-negative")
         self._max_calls = max_calls
         self._period = period_seconds
+        self._slack = slack_seconds
+        self._clock = time.monotonic if clock is None else clock
+        self._sleep = asyncio.sleep if sleep is None else sleep
         self._stamps: deque[float] = deque()
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        """Wait until another call is allowed, then record it."""
+        """Wait until another call is allowed, then record it.
+
+        A fetch that needs more than one minute of budget sleeps until the
+        oldest call has left the window, then continues. A five-year backfill
+        is about 59 time-series requests and waits across those minutes here.
+        """
         while True:
             async with self._lock:
-                now = time.monotonic()
+                now = self._clock()
                 while self._stamps and now - self._stamps[0] >= self._period:
                     self._stamps.popleft()
                 if len(self._stamps) < self._max_calls:
                     self._stamps.append(now)
                     return
-                wait = self._period - (now - self._stamps[0])
-            await asyncio.sleep(max(wait, 0.0))
+                wait = self._period - (now - self._stamps[0]) + self._slack
+            _LOGGER.debug(
+                "ElOverblik call budget is full (%s per %.0f s); waiting %.1f s",
+                self._max_calls,
+                self._period,
+                wait,
+            )
+            await self._sleep(wait)
 
 
 class ElOverblikClient:
@@ -211,8 +245,16 @@ class ElOverblikClient:
         self._access_expiry: datetime | None = None
         self._token_generation = 0
         self._token_lock = asyncio.Lock()
-        self._token_limiter = AsyncIntervalLimiter(TOKEN_CALLS_PER_MINUTE, 60)
-        self._api_limiter = AsyncIntervalLimiter(API_CALLS_PER_MINUTE, 60)
+        self._token_limiter = AsyncIntervalLimiter(
+            TOKEN_CALLS_PER_MINUTE,
+            60,
+            slack_seconds=RATE_LIMIT_WINDOW_SLACK_SECONDS,
+        )
+        self._api_limiter = AsyncIntervalLimiter(
+            API_CALLS_PER_MINUTE,
+            60,
+            slack_seconds=RATE_LIMIT_WINDOW_SLACK_SECONDS,
+        )
         self._token_cooldown_until = 0.0
         self._api_cooldown_until = 0.0
 
@@ -251,6 +293,13 @@ class ElOverblikClient:
         ``date_to`` is inclusive. The API rejects a range whose ends are equal
         and treats the end date as the exclusive boundary, so the client sends
         the following day and never asks for a day after tomorrow.
+
+        DataHub keeps the previous five calendar years plus the current year.
+        A start before 1 January of that first year is moved forward, and a
+        range that ends before that day returns no readings. Chunks share the
+        per-minute call budget: 730 days is 24 requests and 1825 days is 59,
+        so the longer backfill waits out each extra minute and returns every
+        chunk.
         """
         ids = _valid_ids(metering_point_ids)
         if not ids:
@@ -258,10 +307,29 @@ class ElOverblikClient:
         if date_to < date_from:
             raise ValueError("date_to is before date_from")
         canonical = _canonical_aggregation(aggregation)
-        tomorrow = datetime.now(_LOCAL_ZONE).date() + timedelta(days=1)
+        today = datetime.now(_LOCAL_ZONE).date()
+        tomorrow = today + timedelta(days=1)
+        earliest = earliest_history_date(today)
         end_inclusive = min(date_to, tomorrow - timedelta(days=1))
         if end_inclusive < date_from:
             end_inclusive = date_from
+        if end_inclusive < earliest:
+            _LOGGER.debug(
+                "Skipping time series %s through %s; DataHub starts at %s",
+                date_from,
+                end_inclusive,
+                earliest,
+            )
+            return []
+        if date_from < earliest:
+            _LOGGER.debug(
+                "Moving time series start from %s to %s "
+                "(previous %s years plus the current year)",
+                date_from,
+                earliest,
+                DATAHUB_HISTORY_YEARS,
+            )
+            date_from = earliest
         readings: list[EnergyReading] = []
         for id_chunk in _chunks(ids, MAX_METERING_POINTS_PER_CALL):
             for chunk_start, chunk_end in _date_chunks(

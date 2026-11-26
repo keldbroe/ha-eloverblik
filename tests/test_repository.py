@@ -49,7 +49,7 @@ def test_manifest_and_hacs_metadata() -> None:
     hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     assert manifest["domain"] == "eloverblik_dk"
     assert manifest["name"] == "ElOverblik (DK)"
-    assert manifest["version"] == "0.2.0"
+    assert manifest["version"] == "0.2.1"
     assert manifest["codeowners"] == ["@keldbroe"]
     assert manifest["config_flow"] is True
     assert manifest["categories"] == ["energy.meters_monitoring"]

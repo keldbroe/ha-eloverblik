@@ -23,6 +23,7 @@ from custom_components.eloverblik_dk.const import (
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_HOURS,
     DOMAIN,
+    earliest_history_date,
 )
 from custom_components.eloverblik_dk.coordinator import ElOverblikCoordinator
 from custom_components.eloverblik_dk.statistics import request_statistic_rebuild
@@ -99,6 +100,40 @@ async def test_coordinator_backfills_then_refreshes_the_trailing_window(
 
     await coordinator.async_refresh()
     assert FakeElOverblikClient.calls[1][0] == date(2026, 11, 12)
+
+
+async def test_multi_year_history_loads_that_window_then_trails(
+    hass, coordinator_entry, frozen_clock
+) -> None:
+    """730 and 1825 days fetch back to that day, then later polls trail."""
+    cases = (
+        (730, date(2024, 11, 26)),
+        (1825, date(2021, 11, 27)),
+    )
+    for days, start in cases:
+        hass.config_entries.async_update_entry(
+            coordinator_entry,
+            options={
+                CONF_SCAN_INTERVAL_HOURS: 6,
+                CONF_HISTORY_DAYS: days,
+                CONF_IMPORT_STATISTICS: False,
+            },
+        )
+        FakeElOverblikClient.reset()
+        FakeElOverblikClient.points = [POINT]
+        FakeElOverblikClient.readings = [
+            _reading(datetime(2021, 11, 27, 0, tzinfo=UTC), 1.0)
+        ]
+        coordinator = ElOverblikCoordinator(
+            hass, coordinator_entry, FakeElOverblikClient("token")
+        )
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert FakeElOverblikClient.calls[0][0] == start
+        assert FakeElOverblikClient.calls[0][1] == date(2026, 11, 26)
+        assert start >= earliest_history_date(date(2026, 11, 26))
+        await coordinator.async_refresh()
+        assert FakeElOverblikClient.calls[1][0] == date(2026, 11, 12)
 
 
 async def test_rate_limit_keeps_the_last_good_snapshot(

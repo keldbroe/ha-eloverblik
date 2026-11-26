@@ -296,3 +296,81 @@ async def test_options_flow_saves_interval_history_and_statistics(
                 CONF_IMPORT_STATISTICS: True,
             },
         )
+
+
+@pytest.mark.parametrize("days", [730, 1825])
+async def test_options_flow_accepts_multi_year_history(hass, days: int) -> None:
+    """730 and 1825 days are stored, and a longer window asks for a rebuild."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_REFRESH_TOKEN: "token", CONF_METERING_POINTS: []},
+        options={
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 180,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: days,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_HISTORY_DAYS] == days
+    assert statistic_rebuild_requested(hass, entry.entry_id)
+    clear_statistic_rebuild(hass, entry.entry_id)
+
+
+async def test_options_flow_rejects_history_past_five_years(hass) -> None:
+    """1826 days is above the selector maximum of 1825."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_REFRESH_TOKEN: "token", CONF_METERING_POINTS: []},
+        options={
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 180,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_SCAN_INTERVAL_HOURS: 6,
+                CONF_HISTORY_DAYS: 1826,
+                CONF_IMPORT_STATISTICS: True,
+            },
+        )
+
+
+async def test_options_flow_shrinking_five_year_history_does_not_rebuild(hass) -> None:
+    """Shortening 1825 days to 730 keeps the statistics that are already stored."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_REFRESH_TOKEN: "token", CONF_METERING_POINTS: []},
+        options={
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 1825,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 730,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_HISTORY_DAYS] == 730
+    assert not statistic_rebuild_requested(hass, entry.entry_id)

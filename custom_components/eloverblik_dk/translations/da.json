@@ -35,7 +35,7 @@
       "rate_limited": "ElOverblik begrænser antallet af kald lige nu. Vent et minut, og prøv igen.",
       "unknown": "Der opstod en uventet fejl under kontakt til ElOverblik.",
       "no_selection": "Vælg mindst ét målepunkt.",
-      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 365 dage."
+      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 1825 dage."
     },
     "abort": {
       "already_configured": "Denne ElOverblik-konto er allerede tilføjet.",
@@ -57,13 +57,13 @@
         },
         "data_description": {
           "scan_interval_hours": "Hvor ofte måledata hentes. Mindst 1 time. Standard er 6 timer.",
-          "history_days": "Hvor mange dage der lægges ind i Energi-dashboardet. Højst 365 dage. Standard er 180 dage. Sættes tallet op, hentes de ældre timer ind, og den akkumulerede sum skrives forfra. Handlingen Genopbyg statistik gør det samme, når du beder om det.",
+          "history_days": "Hvor mange dage der lægges ind i Energi-dashboardet. Højst 1825 dage (5 år). Standard er 180 dage. Sættes tallet op, hentes de ældre timer ind, og den akkumulerede sum skrives forfra. Handlingen Genopbyg statistik gør det samme, når du beder om det.",
           "import_statistics": "Lægger timeforbrug og -eksport ind som langtidsstatistik, så du kan vælge dem under netforbrug og levering til net."
         }
       }
     },
     "error": {
-      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 365 dage."
+      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 1825 dage."
     }
   },
   "entity": {

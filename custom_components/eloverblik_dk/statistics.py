@@ -17,7 +17,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from .api import EnergyReading, MeteringPoint
-from .const import DOMAIN
+from .const import DOMAIN, earliest_history_date
 
 ImportMode = Literal["auto", "append", "rebuild"]
 _CLEAR_TIMEOUT_SECONDS = 60.0
@@ -75,8 +75,14 @@ def resolution_from_duration(duration: timedelta) -> str:
 
 
 def history_cutoff(now: datetime, tz: ZoneInfo, history_days: int) -> date:
-    """Return the first local date included in a statistics window."""
-    return now.astimezone(tz).date() - timedelta(days=history_days)
+    """Return the first local date included in a statistics window.
+
+    The cutoff stays on or after 1 January of the year five years before
+    ``now``, which is the oldest day DataHub still serves.
+    """
+    local_today = now.astimezone(tz).date()
+    requested = local_today - timedelta(days=history_days)
+    return max(requested, earliest_history_date(local_today))
 
 
 def needs_statistic_rebuild(

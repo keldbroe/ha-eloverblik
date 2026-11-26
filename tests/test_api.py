@@ -14,6 +14,7 @@ import pytest
 from aioresponses import aioresponses
 
 from custom_components.eloverblik_dk.api import (
+    AsyncIntervalLimiter,
     ElOverblikApiError,
     ElOverblikAuthError,
     ElOverblikClient,
@@ -22,7 +23,13 @@ from custom_components.eloverblik_dk.api import (
     parse_metering_points,
     parse_time_series,
 )
-from custom_components.eloverblik_dk.const import METERING_POINTS_URL, TOKEN_URL
+from custom_components.eloverblik_dk.const import (
+    API_CALLS_PER_MINUTE,
+    METERING_POINTS_URL,
+    RATE_LIMIT_WINDOW_SLACK_SECONDS,
+    TOKEN_URL,
+    earliest_history_date,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CONSUMPTION_ID = "571313174000000017"
@@ -42,6 +49,11 @@ def _load(name: str) -> dict[str, object]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+_SERIES_URL = re.compile(
+    r"https://api\.eloverblik\.dk/customerapi/api/meterdata/gettimeseries/.*"
+)
+
+
 def _calls(
     mocked: aioresponses, method: str, fragment: str
 ) -> list[tuple[str, object]]:
@@ -50,6 +62,62 @@ def _calls(
         if key[0] == method and fragment in str(key[1]):
             found.extend((str(key[1]), call) for call in calls)
     return found
+
+
+def _freeze_copenhagen_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fix the API clock on 26 November 2026 in Denmark."""
+
+    class FrozenDateTime(datetime):
+        """datetime.now() pinned to the afternoon used by the other tests."""
+
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return datetime(2026, 11, 26, 12, 0)
+            return datetime(2026, 11, 26, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.api.datetime",
+        FrozenDateTime,
+    )
+
+
+def _virtual_clock(client: ElOverblikClient) -> list[float]:
+    """Replace the API limiter clock so a long backfill does not sleep for real."""
+    clock = {"now": 0.0}
+    sleeps: list[float] = []
+
+    def now() -> float:
+        return clock["now"]
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    client._api_limiter._clock = now
+    client._api_limiter._sleep = sleep
+    return sleeps
+
+
+def _actual_spans(posts: list[tuple[str, object]]) -> list[tuple[date, date]]:
+    """Return inclusive Actual chunks, requiring a contiguous 31-day tiling."""
+    spans: list[tuple[date, date]] = []
+    for url, call in posts:
+        match = re.search(
+            r"/gettimeseries/(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})/Actual$",
+            url,
+        )
+        assert match is not None
+        body = call.kwargs["json"]
+        assert body["meteringPoints"]["meteringPoint"] == [CONSUMPTION_ID]
+        chunk_start = date.fromisoformat(match.group(1))
+        inclusive_end = date.fromisoformat(match.group(2)) - timedelta(days=1)
+        assert (inclusive_end - chunk_start).days + 1 <= 31
+        spans.append((chunk_start, inclusive_end))
+    spans.sort()
+    for previous, current in itertools.pairwise(spans):
+        assert current[0] == previous[1] + timedelta(days=1)
+    return spans
 
 
 @pytest.fixture
@@ -401,22 +469,106 @@ async def test_180_day_range_is_requested_in_31_day_chunks() -> None:
         finally:
             await client.async_close()
         posts = _calls(mocked, "POST", "/gettimeseries/")
-    spans: list[tuple[date, date]] = []
-    for url, call in posts:
-        match = re.search(
-            r"/gettimeseries/(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})/Actual$",
-            url,
-        )
-        assert match is not None
-        body = call.kwargs["json"]
-        assert body["meteringPoints"]["meteringPoint"] == [CONSUMPTION_ID]
-        chunk_start = date.fromisoformat(match.group(1))
-        inclusive_end = date.fromisoformat(match.group(2)) - timedelta(days=1)
-        assert (inclusive_end - chunk_start).days + 1 <= 31
-        spans.append((chunk_start, inclusive_end))
-    spans.sort()
+    spans = _actual_spans(posts)
     assert len(spans) == 6
     assert spans[0][0] == start
     assert spans[-1][1] == end
-    for previous, current in itertools.pairwise(spans):
-        assert current[0] == previous[1] + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_paces_59_calls_across_minutes() -> None:
+    """59 acquisitions wait twice and never place 26 calls in one minute."""
+    clock = {"now": 0.0}
+    sleeps: list[float] = []
+
+    def now() -> float:
+        return clock["now"]
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    limiter = AsyncIntervalLimiter(
+        API_CALLS_PER_MINUTE,
+        60,
+        slack_seconds=RATE_LIMIT_WINDOW_SLACK_SECONDS,
+        clock=now,
+        sleep=sleep,
+    )
+    acquired_at: list[float] = []
+    for _ in range(59):
+        await limiter.acquire()
+        acquired_at.append(clock["now"])
+    assert sleeps == pytest.approx([61.0, 61.0])
+    assert acquired_at[:25] == [0.0] * 25
+    assert acquired_at[25:50] == [61.0] * 25
+    assert acquired_at[50:] == [122.0] * 9
+    for moment in acquired_at:
+        in_window = [earlier for earlier in acquired_at if 0 <= moment - earlier < 60]
+        assert len(in_window) <= API_CALLS_PER_MINUTE
+
+
+@pytest.mark.asyncio
+async def test_multi_year_ranges_stay_in_31_day_chunks_and_pace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """730 days is 24 calls; 1825 days is 59 and waits across minutes."""
+    _freeze_copenhagen_today(monkeypatch)
+    end = date(2026, 11, 26)
+    cases = (
+        (730, 24, []),
+        (1825, 59, [61.0, 61.0]),
+    )
+    for days, expected_chunks, expected_sleeps in cases:
+        start = end - timedelta(days=days - 1)
+        assert (end - start).days + 1 == days
+        assert start >= earliest_history_date(end)
+        with aioresponses() as mocked:
+            mocked.get(TOKEN_URL, payload={"result": _jwt(time.time() + 7200)})
+            mocked.post(_SERIES_URL, payload={"result": []}, repeat=True)
+            client = ElOverblikClient("refresh-token-should-stay-secret")
+            assert client._api_limiter._max_calls == API_CALLS_PER_MINUTE
+            assert client._api_limiter._slack == RATE_LIMIT_WINDOW_SLACK_SECONDS
+            sleeps = _virtual_clock(client)
+            try:
+                await client.async_get_time_series(
+                    [CONSUMPTION_ID], start, end, aggregation="Actual"
+                )
+            finally:
+                await client.async_close()
+            posts = _calls(mocked, "POST", "/gettimeseries/")
+        spans = _actual_spans(posts)
+        assert len(spans) == expected_chunks
+        assert spans[0][0] == start
+        assert spans[-1][1] == end
+        assert sleeps == pytest.approx(expected_sleeps)
+
+
+@pytest.mark.asyncio
+async def test_time_series_respects_the_five_year_datahub_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Requests before 1 January five years ago are moved forward or skipped."""
+    _freeze_copenhagen_today(monkeypatch)
+    earliest = date(2021, 1, 1)
+    assert earliest_history_date(date(2026, 11, 26)) == earliest
+    with aioresponses() as mocked:
+        mocked.get(TOKEN_URL, payload={"result": _jwt(time.time() + 7200)})
+        mocked.post(_SERIES_URL, payload={"result": []}, repeat=True)
+        client = ElOverblikClient("refresh-token-should-stay-secret")
+        _virtual_clock(client)
+        try:
+            empty = await client.async_get_time_series(
+                [CONSUMPTION_ID], date(2018, 1, 1), date(2020, 12, 31)
+            )
+            await client.async_get_time_series(
+                [CONSUMPTION_ID], date(2020, 12, 15), date(2021, 1, 20)
+            )
+        finally:
+            await client.async_close()
+        posts = _calls(mocked, "POST", "/gettimeseries/")
+    assert empty == []
+    spans = _actual_spans(posts)
+    assert spans[0][0] == earliest
+    assert spans[-1][1] == date(2021, 1, 20)
+    assert all(chunk_start >= earliest for chunk_start, _chunk_end in spans)
