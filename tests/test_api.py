@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import re
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,40 @@ def test_quarter_document_accepts_single_objects_and_megawatt_hours() -> None:
     }
     assert production[0].kwh == pytest.approx(1.0)
     assert production[0].start == datetime(2026, 11, 23, 10, 0, tzinfo=UTC)
+
+
+def test_daily_resolution_parses() -> None:
+    """A P1D period stays one reading so statistics can spread it later."""
+    payload = {
+        "TimeSeries": [
+            {
+                "businessType": "A04",
+                "measurement_Unit.name": "kWh",
+                "mRID": CONSUMPTION_ID,
+                "Period": [
+                    {
+                        "resolution": "P1D",
+                        "timeInterval": {
+                            "start": "2026-11-01T00:00:00Z",
+                            "end": "2026-11-02T00:00:00Z",
+                        },
+                        "Point": [
+                            {
+                                "position": "1",
+                                "out_Quantity.quantity": "24",
+                                "out_Quantity.quality": "A04",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    readings = parse_time_series(payload)
+    assert len(readings) == 1
+    assert readings[0].duration == timedelta(days=1)
+    assert readings[0].kwh == pytest.approx(24)
+    assert readings[0].start == datetime(2026, 11, 1, 0, tzinfo=UTC)
 
 
 def test_comma_decimal_quantity_is_parsed() -> None:
@@ -309,3 +344,79 @@ async def test_api_error_does_not_include_the_refresh_token() -> None:
             await client.async_close()
     assert caught.value.status == 500
     assert "refresh-token-should-stay-secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_actual_aggregation_parses_pt1h_and_pt15m_fixtures() -> None:
+    """The default request is Actual and both native resolutions still parse."""
+    cases = (
+        ("timeseries_pt1h.json", timedelta(hours=1)),
+        ("timeseries_pt15m.json", timedelta(minutes=15)),
+    )
+    for name, duration in cases:
+        with aioresponses() as mocked:
+            mocked.get(TOKEN_URL, payload={"result": _jwt(time.time() + 7200)})
+            mocked.post(
+                re.compile(
+                    r"https://api\.eloverblik\.dk/customerapi/api/meterdata/gettimeseries/.*"
+                ),
+                payload=_load(name),
+            )
+            client = ElOverblikClient("refresh-token-should-stay-secret")
+            try:
+                readings = await client.async_get_time_series(
+                    [CONSUMPTION_ID],
+                    date(2026, 11, 22),
+                    date(2026, 11, 24),
+                )
+            finally:
+                await client.async_close()
+            posts = _calls(mocked, "POST", "/gettimeseries/")
+        assert len(posts) == 1
+        assert posts[0][0].endswith("/Actual")
+        assert readings
+        assert {item.duration for item in readings} == {duration}
+
+
+@pytest.mark.asyncio
+async def test_180_day_range_is_requested_in_31_day_chunks() -> None:
+    """A half-year window is tiled by the 31-day API limit, with no gaps."""
+    start = date(2026, 1, 1)
+    end = start + timedelta(days=179)
+    assert (end - start).days + 1 == 180
+    with aioresponses() as mocked:
+        mocked.get(TOKEN_URL, payload={"result": _jwt(time.time() + 7200)})
+        mocked.post(
+            re.compile(
+                r"https://api\.eloverblik\.dk/customerapi/api/meterdata/gettimeseries/.*"
+            ),
+            payload={"result": []},
+            repeat=True,
+        )
+        client = ElOverblikClient("refresh-token-should-stay-secret")
+        try:
+            await client.async_get_time_series(
+                [CONSUMPTION_ID], start, end, aggregation="Actual"
+            )
+        finally:
+            await client.async_close()
+        posts = _calls(mocked, "POST", "/gettimeseries/")
+    spans: list[tuple[date, date]] = []
+    for url, call in posts:
+        match = re.search(
+            r"/gettimeseries/(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})/Actual$",
+            url,
+        )
+        assert match is not None
+        body = call.kwargs["json"]
+        assert body["meteringPoints"]["meteringPoint"] == [CONSUMPTION_ID]
+        chunk_start = date.fromisoformat(match.group(1))
+        inclusive_end = date.fromisoformat(match.group(2)) - timedelta(days=1)
+        assert (inclusive_end - chunk_start).days + 1 <= 31
+        spans.append((chunk_start, inclusive_end))
+    spans.sort()
+    assert len(spans) == 6
+    assert spans[0][0] == start
+    assert spans[-1][1] == end
+    for previous, current in itertools.pairwise(spans):
+        assert current[0] == previous[1] + timedelta(days=1)

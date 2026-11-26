@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -22,6 +22,7 @@ from .api import (
     MeteringPoint,
 )
 from .const import (
+    AGGREGATION_ACTUAL,
     CONF_HISTORY_DAYS,
     CONF_IMPORT_STATISTICS,
     CONF_METERING_POINTS,
@@ -36,7 +37,14 @@ from .const import (
     NAME,
     TRAILING_REFRESH_DAYS,
 )
-from .statistics import UsageSummary, async_import_meter_statistics, summarize_usage
+from .statistics import (
+    ImportMode,
+    UsageSummary,
+    async_import_meter_statistics,
+    clear_statistic_rebuild,
+    statistic_rebuild_requested,
+    summarize_usage,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +92,9 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
         self._readings: dict[str, dict[datetime, EnergyReading]] = {}
         self._history_days_loaded: int | None = None
         self._has_full_history = False
+        self._force_rebuild = False
+        self._statistics_ready: set[str] = set()
+        self.statistics_failed = False
         super().__init__(
             hass,
             _LOGGER,
@@ -119,11 +130,30 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
         """Return whether Energy dashboard statistics should be written."""
         return bool(self.entry.options.get(CONF_IMPORT_STATISTICS, True))
 
+    async def async_rebuild_statistics(self) -> None:
+        """Fetch the full history window and rewrite its long-term statistics."""
+        self._force_rebuild = True
+        self._readings.clear()
+        self._has_full_history = False
+        await self.async_refresh()
+        if not self.last_update_success or self.statistics_failed:
+            message = "ElOverblik could not rebuild statistics"
+            if self.last_exception is not None:
+                message = f"{message}: {self.last_exception}"
+            raise HomeAssistantError(message)
+
     async def _async_update_data(self) -> ElOverblikData:
         """Fetch metering data. Rate limits and outages keep the previous data."""
         selected = self._selected_points()
         if not selected:
             raise UpdateFailed("No metering points are selected")
+        if self.import_statistics and statistic_rebuild_requested(
+            self.hass, self.entry.entry_id
+        ):
+            self._force_rebuild = True
+            self._readings.clear()
+            self._has_full_history = False
+        self.statistics_failed = False
         live = await self._guard(self.client.async_get_metering_points())
         by_id = {point.metering_point_id: point for point in live}
         points = [by_id.get(point.metering_point_id, point) for point in selected]
@@ -138,30 +168,44 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
                 directions={
                     point.metering_point_id: point.direction for point in points
                 },
+                aggregation=AGGREGATION_ACTUAL,
             )
         )
         self._merge(readings)
         self._has_full_history = True
         states: dict[str, PointState] = {}
+        statistics_ok = True
         for point in points:
             cached = list(self._readings.get(point.metering_point_id, {}).values())
             summary = summarize_usage(cached, now=now, tz=zone)
             states[point.metering_point_id] = PointState(point=point, summary=summary)
-            if self.import_statistics:
-                try:
-                    await async_import_meter_statistics(
-                        self.hass,
-                        point,
-                        cached,
-                        history_days=self.history_days,
-                        now=now,
-                        tz=zone,
-                    )
-                except Exception:
-                    _LOGGER.exception(
-                        "Failed to import long-term statistics for %s",
-                        point.metering_point_id,
-                    )
+            if not self.import_statistics and not self._force_rebuild:
+                continue
+            try:
+                written = await async_import_meter_statistics(
+                    self.hass,
+                    point,
+                    cached,
+                    history_days=self.history_days,
+                    now=now,
+                    tz=zone,
+                    mode=self._import_mode(point.metering_point_id),
+                )
+            except Exception:
+                statistics_ok = False
+                _LOGGER.exception(
+                    "Failed to import long-term statistics for %s",
+                    point.metering_point_id,
+                )
+            else:
+                if written < 0:
+                    statistics_ok = False
+                else:
+                    self._statistics_ready.add(point.metering_point_id)
+        if self._force_rebuild and statistics_ok:
+            self._force_rebuild = False
+            clear_statistic_rebuild(self.hass, self.entry.entry_id)
+        self.statistics_failed = not statistics_ok
         latest = [
             state.summary.latest_data_date
             for state in states.values()
@@ -173,6 +217,14 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
             max(latest).isoformat() if latest else "unknown",
         )
         return ElOverblikData(points=states)
+
+    def _import_mode(self, point_id: str) -> ImportMode:
+        """Rebuild on request; otherwise check coverage once, then append."""
+        if self._force_rebuild:
+            return "rebuild"
+        if point_id not in self._statistics_ready:
+            return "auto"
+        return "append"
 
     def _selected_points(self) -> list[MeteringPoint]:
         stored = self.entry.data.get(CONF_METERING_POINTS, [])

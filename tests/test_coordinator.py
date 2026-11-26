@@ -25,6 +25,7 @@ from custom_components.eloverblik_dk.const import (
     DOMAIN,
 )
 from custom_components.eloverblik_dk.coordinator import ElOverblikCoordinator
+from custom_components.eloverblik_dk.statistics import request_statistic_rebuild
 from tests.fake_client import FakeElOverblikClient
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -91,7 +92,7 @@ async def test_coordinator_backfills_then_refreshes_the_trailing_window(
     assert coordinator.last_update_success
     assert FakeElOverblikClient.calls[0][0] == date(2026, 1, 1)
     assert FakeElOverblikClient.calls[0][1] == date(2026, 11, 26)
-    assert FakeElOverblikClient.calls[0][2] == "Hour"
+    assert FakeElOverblikClient.calls[0][2] == "Actual"
     summary = coordinator.data.points[POINT.metering_point_id].summary
     assert summary.day_total_kwh == pytest.approx(3.0)
     assert summary.latest_data_date.isoformat() == "2026-11-24"
@@ -173,3 +174,49 @@ async def test_statistics_import_is_called_when_enabled(
     )
     await coordinator.async_refresh()
     assert imported == [POINT.metering_point_id]
+
+
+async def test_later_polls_append_and_a_history_increase_rebuilds(
+    hass, coordinator_entry, frozen_clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A covered window is appended; a pending history increase rewrites it."""
+    modes: list[str] = []
+
+    async def fake_import(hass, point, readings, **kwargs):
+        del hass, point, readings
+        modes.append(kwargs["mode"])
+        return 1
+
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.coordinator.async_import_meter_statistics",
+        fake_import,
+    )
+    hass.config_entries.async_update_entry(
+        coordinator_entry,
+        options={
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 180,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    FakeElOverblikClient.reset()
+    FakeElOverblikClient.points = [POINT]
+    FakeElOverblikClient.readings = [
+        _reading(datetime(2026, 6, 1, 0, tzinfo=UTC), 1.0),
+        _reading(datetime(2026, 11, 24, 10, tzinfo=UTC), 3.0),
+    ]
+    coordinator = ElOverblikCoordinator(
+        hass, coordinator_entry, FakeElOverblikClient("token")
+    )
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    assert modes == ["auto", "append"]
+    assert FakeElOverblikClient.calls[0][2] == "Actual"
+    assert FakeElOverblikClient.calls[0][0] == date(2026, 1, 1)
+    assert FakeElOverblikClient.calls[1][0] == date(2026, 11, 12)
+
+    request_statistic_rebuild(hass, coordinator_entry.entry_id)
+    await coordinator.async_refresh()
+    assert modes[-1] == "rebuild"
+    assert FakeElOverblikClient.calls[-1][0] == date(2026, 1, 1)
+    assert FakeElOverblikClient.calls[-1][2] == "Actual"

@@ -39,6 +39,8 @@ def _year(summary: UsageSummary) -> float | None:
 
 
 def _hour(summary: UsageSummary) -> float | None:
+    if summary.latest_interval_kwh is not None:
+        return summary.latest_interval_kwh
     return summary.latest_hour_kwh
 
 
@@ -199,11 +201,15 @@ class ElOverblikSensor(CoordinatorEntity[ElOverblikCoordinator], SensorEntity):
             and summary.latest_data_date is not None
         ):
             attributes["data_date"] = summary.latest_data_date.isoformat()
-        if (
-            self.entity_description.key == "latest_hour"
-            and summary.latest_hour_start is not None
-        ):
-            attributes["period_start"] = _iso(summary.latest_hour_start)
+        if self.entity_description.key == "latest_hour":
+            start = summary.latest_interval_start or summary.latest_hour_start
+            end = summary.latest_interval_end
+            if start is not None:
+                attributes["period_start"] = _iso(start)
+            if end is not None:
+                attributes["period_end"] = _iso(end)
+            if summary.latest_resolution is not None:
+                attributes["resolution"] = summary.latest_resolution
         return attributes
 
     @property

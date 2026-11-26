@@ -32,6 +32,10 @@ from custom_components.eloverblik_dk.const import (
     CONF_SCAN_INTERVAL_HOURS,
     DOMAIN,
 )
+from custom_components.eloverblik_dk.statistics import (
+    clear_statistic_rebuild,
+    statistic_rebuild_requested,
+)
 from tests.fake_client import FakeElOverblikClient
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -89,6 +93,10 @@ async def test_user_flow_creates_an_entry(hass, fake_api, points) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
+    assert result["description_placeholders"] == {
+        "site": "eloverblik.dk",
+        "url": "https://eloverblik.dk/welcome",
+    }
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_REFRESH_TOKEN: " refresh-token "}
@@ -108,7 +116,7 @@ async def test_user_flow_creates_an_entry(hass, fake_api, points) -> None:
     }
     assert stored == {CONSUMPTION_ID, EXPORT_ID}
     assert result["options"][CONF_SCAN_INTERVAL_HOURS] == 6
-    assert result["options"][CONF_HISTORY_DAYS] == 30
+    assert result["options"][CONF_HISTORY_DAYS] == 180
     assert result["options"][CONF_IMPORT_STATISTICS] is True
     assert fake_api.tokens[0] == "refresh-token"
 
@@ -253,6 +261,30 @@ async def test_options_flow_saves_interval_history_and_statistics(
     assert entry.options[CONF_SCAN_INTERVAL_HOURS] == 12
     assert entry.options[CONF_HISTORY_DAYS] == 90
     assert entry.options[CONF_IMPORT_STATISTICS] is False
+    assert statistic_rebuild_requested(hass, entry.entry_id)
+    clear_statistic_rebuild(hass, entry.entry_id)
+
+    shrunk = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_REFRESH_TOKEN: "token", CONF_METERING_POINTS: []},
+        options={
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 180,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    shrunk.add_to_hass(hass)
+    shrunk_flow = await hass.config_entries.options.async_init(shrunk.entry_id)
+    shrunk_flow = await hass.config_entries.options.async_configure(
+        shrunk_flow["flow_id"],
+        {
+            CONF_SCAN_INTERVAL_HOURS: 6,
+            CONF_HISTORY_DAYS: 30,
+            CONF_IMPORT_STATISTICS: True,
+        },
+    )
+    assert shrunk_flow["type"] is FlowResultType.CREATE_ENTRY
+    assert not statistic_rebuild_requested(hass, shrunk.entry_id)
 
     invalid = await hass.config_entries.options.async_init(entry.entry_id)
     with pytest.raises(InvalidData):

@@ -36,17 +36,26 @@ def test_translation_files_are_valid_and_share_keys() -> None:
     assert strings["entity"]["sensor"]["day_total"]["name"]
     assert danish["config"]["error"]["invalid_auth"]
     assert "Forbrug" not in strings["config"]["step"]["user"]["title"]
+    description = strings["config"]["step"]["user"]["description"]
+    assert "{url}" in description
+    assert "{site}" in description
+    assert "https://" not in description
+    assert "https://" not in danish["config"]["step"]["user"]["description"]
 
 
 def test_manifest_and_hacs_metadata() -> None:
-    """Marketplace metadata uses the dedicated domain and the initial version."""
+    """Marketplace metadata uses the dedicated domain and the current version."""
     manifest = json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))
     hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     assert manifest["domain"] == "eloverblik_dk"
     assert manifest["name"] == "ElOverblik (DK)"
-    assert manifest["version"] == "0.1.0"
+    assert manifest["version"] == "0.2.0"
     assert manifest["codeowners"] == ["@keldbroe"]
     assert manifest["config_flow"] is True
+    assert manifest["categories"] == ["energy.meters_monitoring"]
+    keys = list(manifest)
+    assert keys[:2] == ["domain", "name"]
+    assert keys[2:] == sorted(keys[2:])
     assert manifest["iot_class"] == "cloud_polling"
     assert manifest["documentation"] == "https://github.com/keldbroe/ha-eloverblik"
     assert hacs == {

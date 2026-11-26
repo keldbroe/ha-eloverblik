@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to ElOverblik",
-        "description": "Paste a refresh token from [eloverblik.dk](https://eloverblik.dk/welcome). Open Datadeling, create a token for the metering points you want to share, and paste it here. The token stays valid for up to a year.",
+        "description": "Paste a refresh token from [{site}]({url}). Open Datadeling, create a token for the metering points you want to share, and paste it here. The token stays valid for up to a year.",
         "data": {
           "refresh_token": "Refresh token"
         },
@@ -57,7 +57,7 @@
         },
         "data_description": {
           "scan_interval_hours": "How often metering data is fetched. Minimum 1 hour. The default is 6 hours.",
-          "history_days": "How many days are written to the Energy dashboard the first time statistics are imported. Maximum 365 days. Later increases do not rewrite hours that are already stored.",
+          "history_days": "How many days are written to the Energy dashboard. Maximum 365 days. The default is 180 days. Increasing this backfills older hours and rewrites the cumulative sum. The rebuild statistics action does the same on demand.",
           "import_statistics": "Writes hourly consumption and export as long-term statistics, so you can pick them under grid consumption and return to grid."
         }
       }
@@ -94,9 +94,11 @@
         }
       },
       "latest_hour": {
-        "name": "Latest hour",
+        "name": "Latest interval",
         "state_attributes": {
           "period_start": { "name": "Period start" },
+          "period_end": { "name": "Period end" },
+          "resolution": { "name": "Resolution" },
           "metering_point_id": { "name": "Metering point" },
           "metering_point_type": { "name": "Metering point type" },
           "type_of_mp": { "name": "DataHub type" }
@@ -110,6 +112,12 @@
           "type_of_mp": { "name": "DataHub type" }
         }
       }
+    }
+  },
+  "services": {
+    "rebuild_statistics": {
+      "name": "Rebuild statistics",
+      "description": "Clear the imported Energy dashboard statistics and write them again for the configured history (180 days by default) as one continuous cumulative sum. Increasing the statistics history does this automatically."
     }
   }
 }

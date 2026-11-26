@@ -1,0 +1,6 @@
+rebuild_statistics:
+  name: Rebuild statistics
+  description: >-
+    Clear the imported Energy dashboard statistics and write them again for the
+    configured history (180 days by default) as one continuous cumulative sum.
+    Increasing the statistics history does this automatically.
