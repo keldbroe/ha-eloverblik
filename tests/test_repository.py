@@ -36,6 +36,11 @@ def test_translation_files_are_valid_and_share_keys() -> None:
     assert strings["entity"]["sensor"]["day_total"]["name"]
     assert danish["config"]["error"]["invalid_auth"]
     assert "Forbrug" not in strings["config"]["step"]["user"]["title"]
+    description = strings["config"]["step"]["user"]["description"]
+    assert "{url}" in description
+    assert "{site}" in description
+    assert "https://" not in description
+    assert "https://" not in danish["config"]["step"]["user"]["description"]
 
 
 def test_manifest_and_hacs_metadata() -> None:
@@ -47,6 +52,10 @@ def test_manifest_and_hacs_metadata() -> None:
     assert manifest["version"] == "0.2.0"
     assert manifest["codeowners"] == ["@keldbroe"]
     assert manifest["config_flow"] is True
+    assert manifest["categories"] == ["energy.meters_monitoring"]
+    keys = list(manifest)
+    assert keys[:2] == ["domain", "name"]
+    assert keys[2:] == sorted(keys[2:])
     assert manifest["iot_class"] == "cloud_polling"
     assert manifest["documentation"] == "https://github.com/keldbroe/ha-eloverblik"
     assert hacs == {

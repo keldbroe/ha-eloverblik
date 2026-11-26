@@ -93,6 +93,10 @@ async def test_user_flow_creates_an_entry(hass, fake_api, points) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
+    assert result["description_placeholders"] == {
+        "site": "eloverblik.dk",
+        "url": "https://eloverblik.dk/welcome",
+    }
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_REFRESH_TOKEN: " refresh-token "}

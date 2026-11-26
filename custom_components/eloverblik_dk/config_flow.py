@@ -45,6 +45,11 @@ from .statistics import request_statistic_rebuild
 
 _LOGGER = logging.getLogger(__name__)
 
+_TOKEN_PLACEHOLDERS = {
+    "site": "eloverblik.dk",
+    "url": "https://eloverblik.dk/welcome",
+}
+
 _TOKEN_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_REFRESH_TOKEN): selector.TextSelector(
@@ -181,6 +186,7 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=step_id,
             data_schema=_TOKEN_SCHEMA,
+            description_placeholders=_TOKEN_PLACEHOLDERS,
             errors=errors,
         )
 

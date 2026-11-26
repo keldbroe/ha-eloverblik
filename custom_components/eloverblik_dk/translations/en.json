@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to ElOverblik",
-        "description": "Paste a refresh token from [eloverblik.dk](https://eloverblik.dk/welcome). Open Datadeling, create a token for the metering points you want to share, and paste it here. The token stays valid for up to a year.",
+        "description": "Paste a refresh token from [{site}]({url}). Open Datadeling, create a token for the metering points you want to share, and paste it here. The token stays valid for up to a year.",
         "data": {
           "refresh_token": "Refresh token"
         },

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Forbind til ElOverblik",
-        "description": "Indsæt et refresh-token fra [eloverblik.dk](https://eloverblik.dk/welcome). Åbn Datadeling, opret et token for de målepunkter, du vil dele, og indsæt det her. Tokenet gælder i op til et år.",
+        "description": "Indsæt et refresh-token fra [{site}]({url}). Åbn Datadeling, opret et token for de målepunkter, du vil dele, og indsæt det her. Tokenet gælder i op til et år.",
         "data": {
           "refresh_token": "Refresh-token"
         },

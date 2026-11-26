@@ -1,14 +1,15 @@
 {
   "domain": "eloverblik_dk",
   "name": "ElOverblik (DK)",
+  "after_dependencies": ["recorder"],
+  "categories": ["energy.meters_monitoring"],
   "codeowners": ["@keldbroe"],
   "config_flow": true,
   "documentation": "https://github.com/keldbroe/ha-eloverblik",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/keldbroe/ha-eloverblik/issues",
+  "loggers": ["custom_components.eloverblik_dk"],
   "requirements": [],
-  "version": "0.2.0",
-  "after_dependencies": ["recorder"],
-  "loggers": ["custom_components.eloverblik_dk"]
+  "version": "0.2.0"
 }
