@@ -49,6 +49,21 @@
     "step": {
       "init": {
         "title": "ElOverblik options",
+        "description": "Choose what to change.",
+        "menu_options": {
+          "metering_points": "Metering points",
+          "settings": "Update interval and statistics"
+        }
+      },
+      "metering_points": {
+        "title": "Choose metering points",
+        "description": "Add or remove metering points. A point you remove loses its device and sensors, but the statistics already imported for it are kept. If two points report the same values (for example E17 and its D07 child, or E18 and D06), keep one of them so the same electricity is not counted twice. Points another ElOverblik entry monitors are not listed.",
+        "data": {
+          "metering_point_ids": "Metering points"
+        }
+      },
+      "settings": {
+        "title": "ElOverblik options",
         "description": "ElOverblik publishes metering data with a delay of about one to three days. Polling every few hours is enough and stays inside Energinet's rate limits.",
         "data": {
           "scan_interval_hours": "Update interval (hours)",
@@ -63,7 +78,12 @@
       }
     },
     "error": {
-      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 1825 days."
+      "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 1825 days.",
+      "no_selection": "Select at least one metering point.",
+      "invalid_auth": "ElOverblik rejected the refresh token. Only the points that are already selected are listed.",
+      "cannot_connect": "Could not reach ElOverblik. Only the points that are already selected are listed.",
+      "rate_limited": "ElOverblik is limiting requests right now. Only the points that are already selected are listed.",
+      "unknown": "Something unexpected went wrong. Only the points that are already selected are listed."
     }
   },
   "entity": {
@@ -71,45 +91,83 @@
       "day_total": {
         "name": "Latest available day",
         "state_attributes": {
-          "data_date": { "name": "Data date" },
-          "metering_point_id": { "name": "Metering point" },
-          "metering_point_type": { "name": "Metering point type" },
-          "type_of_mp": { "name": "DataHub type" }
+          "data_date": {
+            "name": "Data date"
+          },
+          "metering_point_id": {
+            "name": "Metering point"
+          },
+          "metering_point_type": {
+            "name": "Metering point type"
+          },
+          "type_of_mp": {
+            "name": "DataHub type"
+          }
         }
       },
       "month_total": {
         "name": "This month",
         "state_attributes": {
-          "metering_point_id": { "name": "Metering point" },
-          "metering_point_type": { "name": "Metering point type" },
-          "type_of_mp": { "name": "DataHub type" }
+          "metering_point_id": {
+            "name": "Metering point"
+          },
+          "metering_point_type": {
+            "name": "Metering point type"
+          },
+          "type_of_mp": {
+            "name": "DataHub type"
+          }
         }
       },
       "year_total": {
         "name": "This year",
         "state_attributes": {
-          "metering_point_id": { "name": "Metering point" },
-          "metering_point_type": { "name": "Metering point type" },
-          "type_of_mp": { "name": "DataHub type" }
+          "metering_point_id": {
+            "name": "Metering point"
+          },
+          "metering_point_type": {
+            "name": "Metering point type"
+          },
+          "type_of_mp": {
+            "name": "DataHub type"
+          }
         }
       },
       "latest_hour": {
         "name": "Latest interval",
         "state_attributes": {
-          "period_start": { "name": "Period start" },
-          "period_end": { "name": "Period end" },
-          "resolution": { "name": "Resolution" },
-          "metering_point_id": { "name": "Metering point" },
-          "metering_point_type": { "name": "Metering point type" },
-          "type_of_mp": { "name": "DataHub type" }
+          "period_start": {
+            "name": "Period start"
+          },
+          "period_end": {
+            "name": "Period end"
+          },
+          "resolution": {
+            "name": "Resolution"
+          },
+          "metering_point_id": {
+            "name": "Metering point"
+          },
+          "metering_point_type": {
+            "name": "Metering point type"
+          },
+          "type_of_mp": {
+            "name": "DataHub type"
+          }
         }
       },
       "latest_data_date": {
         "name": "Latest data date",
         "state_attributes": {
-          "metering_point_id": { "name": "Metering point" },
-          "metering_point_type": { "name": "Metering point type" },
-          "type_of_mp": { "name": "DataHub type" }
+          "metering_point_id": {
+            "name": "Metering point"
+          },
+          "metering_point_type": {
+            "name": "Metering point type"
+          },
+          "type_of_mp": {
+            "name": "DataHub type"
+          }
         }
       }
     }
@@ -118,6 +176,24 @@
     "rebuild_statistics": {
       "name": "Rebuild statistics",
       "description": "Clear the imported Energy dashboard statistics and write them again for the configured history (180 days by default) as one continuous cumulative sum. Increasing the statistics history does this automatically."
+    }
+  },
+  "issues": {
+    "duplicate_metering_point": {
+      "title": "Two ElOverblik metering points report the same values",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Stop monitoring the duplicate point?",
+            "description": "{remove} reports exactly the same hourly values as {keep}. DataHub often does this for a parent point and its child. Keeping both shows the same numbers twice and can count the same electricity twice in the Energy dashboard.\n\nSubmit to stop monitoring {remove} and keep {keep}. The device and sensors of {remove} are removed. Statistics that were already imported stay in Home Assistant. You can select the point again under the integration's options."
+          }
+        },
+        "abort": {
+          "entry_not_found": "The ElOverblik entry no longer exists.",
+          "already_deselected": "This metering point is no longer selected.",
+          "last_point": "This is the last selected metering point, so it cannot be removed."
+        }
+      }
     }
   }
 }

@@ -62,7 +62,19 @@ A parent `E17` often has `D07` and `D06` children. Selecting the parent together
 
 A metering point that another ElOverblik entry already monitors is not offered again.
 
+### Change the metering points later
+
+**Settings → Devices & services → ElOverblik (DK) → Configure → Metering points** lists every point the token can see. Add or remove points there. You can also open a point's device and choose **Delete**, which removes it from the selection. A removed point loses its device and sensors. Statistics already imported for it are kept, and selecting it again continues them.
+
+### Two points with the same numbers
+
+DataHub often reports exactly the same hourly values for a parent and its child, for example `E17` and its `D07`, or `E18` and `D06`. Two devices then show the same numbers, and adding both to the Energy dashboard counts the same electricity twice.
+
+The integration compares the selected points of the same kind over the last month. When two of them match hour for hour for at least a week, a warning appears under **Settings → Repairs**. It names the point to keep and the one to drop. **Fix** drops it. The child point (`D07`, `D06`) is kept, because it is the specific grid measurement and usually has the longer history. If the points later start to differ, the warning goes away on its own. Hours with no export, such as winter nights, are not counted as a match.
+
 ### Options
+
+**Configure** opens a menu with **Metering points** (see above) and **Update interval and statistics**:
 
 - **Update interval:** default 6 hours, minimum 1 hour. ElOverblik data is delayed, so polling faster does not produce newer values and uses the rate limit.
 - **Statistics history:** default 180 days (half a year), maximum 1825 (5 years, inside DataHub's retention of the previous five calendar years plus the current year). This is how far back statistics are written. Raising the number later backfills the older days and rewrites the cumulative sum. The first multi-year import is paced at 25 API calls per minute, so it takes a few minutes. It happens once: which window has been written is remembered in `.storage`, so a restart only fetches the current year and the hours after the newest stored one. Lowering the number leaves hours that were already stored.

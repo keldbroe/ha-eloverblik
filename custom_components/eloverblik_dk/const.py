@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 DOMAIN = "eloverblik_dk"
 NAME = "ElOverblik (DK)"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 ATTRIBUTION = "Energinet ElOverblik / DataHub"
 ISSUE_URL = "https://github.com/keldbroe/ha-eloverblik/issues"
 DOCS_URL = "https://github.com/keldbroe/ha-eloverblik"
@@ -75,6 +75,7 @@ AGGREGATION_ACTUAL = "Actual"
 AGGREGATION_HOUR = "Hour"
 
 SERVICE_REBUILD_STATISTICS = "rebuild_statistics"
+ISSUE_DUPLICATE_POINT = "duplicate_metering_point"
 
 
 def earliest_history_date(today: date) -> date:

@@ -362,7 +362,7 @@ def test_lookup_error_is_an_exception() -> None:
 
 def test_default_history_is_half_a_year() -> None:
     """New installations import 180 days, bounded by 1 and 1825."""
-    assert VERSION == "0.3.0"
+    assert VERSION == "0.3.1"
     assert DEFAULT_HISTORY_DAYS == 180
     assert MIN_HISTORY_DAYS == 1
     assert MAX_HISTORY_DAYS == 1825

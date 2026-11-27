@@ -26,7 +26,6 @@ from .const import (
     AGGREGATION_ACTUAL,
     CONF_HISTORY_DAYS,
     CONF_IMPORT_STATISTICS,
-    CONF_METERING_POINTS,
     CONF_SCAN_INTERVAL_HOURS,
     DEFAULT_HISTORY_DAYS,
     DEFAULT_SCAN_INTERVAL_HOURS,
@@ -40,7 +39,12 @@ from .const import (
     TRAILING_REFRESH_DAYS,
     earliest_history_date,
 )
-from .helpers import ha_time_zone
+from .duplicates import find_duplicate_points
+from .helpers import (
+    async_update_duplicate_issues,
+    ha_time_zone,
+    selected_points,
+)
 from .statistics import (
     ImportMode,
     StatisticLookupError,
@@ -121,6 +125,8 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
         self._covered_from: dict[str, date] | None = None
         self.statistics_failed = False
         self.last_fetch_window: tuple[date, date] | None = None
+        # Redundant point id -> the point with the same values that is kept.
+        self.duplicates: dict[str, str] = {}
         super().__init__(
             hass,
             _LOGGER,
@@ -265,6 +271,7 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
             self._force_rebuild = False
             clear_statistic_rebuild(self.hass, self.entry.entry_id)
         self.statistics_failed = not statistics_ok
+        self._check_duplicates(points, now)
         self._prune(today, zone)
         latest = [
             state.summary.latest_data_date
@@ -317,14 +324,33 @@ class ElOverblikCoordinator(DataUpdateCoordinator[ElOverblikData]):
         return "append", min(trailing, last_start.astimezone(zone).date())
 
     def _selected_points(self) -> list[MeteringPoint]:
-        stored = self.entry.data.get(CONF_METERING_POINTS, [])
-        points: list[MeteringPoint] = []
-        for item in stored:
-            if isinstance(item, dict):
-                point = MeteringPoint.from_dict(item)
-                if point.metering_point_id:
-                    points.append(point)
-        return points
+        return selected_points(self.entry)
+
+    def _check_duplicates(self, points: list[MeteringPoint], now: datetime) -> None:
+        """Warn, through a fixable repair, about points with identical data."""
+        if len(points) < 2:
+            return
+        result = find_duplicate_points(
+            points,
+            {
+                point_id: list(bucket.values())
+                for point_id, bucket in self._readings.items()
+            },
+            now=now,
+        )
+        self.duplicates = {
+            finding.remove.metering_point_id: finding.keep.metering_point_id
+            for finding in result.findings
+        }
+        for finding in result.findings:
+            _LOGGER.debug(
+                "Metering point %s (%s) reports the same values as %s (%s)",
+                finding.remove.metering_point_id,
+                finding.remove.type_of_mp,
+                finding.keep.metering_point_id,
+                finding.keep.type_of_mp,
+            )
+        async_update_duplicate_issues(self.hass, self.entry, result)
 
     def _fetch_window(
         self, today: date, statistic_starts: list[date]

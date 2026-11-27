@@ -9,6 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 
@@ -20,7 +21,14 @@ from .const import (
     STORAGE_VERSION,
 )
 from .coordinator import ElOverblikCoordinator, ElOverblikRuntime, storage_key
-from .helpers import ha_time_zone, token_cache
+from .helpers import (
+    async_deselect_points,
+    async_prune_duplicate_issues,
+    async_remove_stale_devices,
+    ha_time_zone,
+    selected_points,
+    token_cache,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +62,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ElOverblik from a config entry."""
+    removed = async_remove_stale_devices(hass, entry)
+    if removed:
+        _LOGGER.debug("Removed %s devices of deselected metering points", removed)
+    async_prune_duplicate_issues(hass, entry)
     session = async_get_clientsession(hass)
     client = ElOverblikClient(
         entry.data[CONF_REFRESH_TOKEN],
@@ -85,5 +97,22 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete the entry's backfill marker. Imported statistics are kept."""
+    """Delete the entry's marker and repairs. Imported statistics are kept."""
+    async_prune_duplicate_issues(hass, entry, remove_all=True)
     await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Let the user delete a metering point's device, which deselects it.
+
+    The last selected point cannot be removed this way; remove the
+    integration instead. Imported statistics are kept.
+    """
+    point_ids = {ident for domain, ident in device.identifiers if domain == DOMAIN}
+    selected = {point.metering_point_id for point in selected_points(entry)}
+    wanted = point_ids & selected
+    if not wanted:
+        return True
+    return async_deselect_points(hass, entry, wanted)

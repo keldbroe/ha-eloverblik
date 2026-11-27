@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- **Identical metering points are no longer shown twice without warning.** DataHub often sends the same hourly values for a parent and its child (`E17` and `D07`, `E18` and `D06`). When two selected points of the same kind match hour for hour for at least a week, a fixable warning appears under **Settings → Repairs**. **Fix** drops the redundant point and keeps the child. The warning is withdrawn if the points start to differ.
+- **The metering points can be changed after setup.** **Configure** now has a **Metering points** page, and deleting a point's device in the UI deselects it. Before, the only way to drop a point was to remove the whole integration.
+
+### Changed
+
+- **Configure** opens a menu: **Metering points** or **Update interval and statistics**.
+- Devices and sensors of deselected points are removed. Their imported statistics are kept.
+- Diagnostics list which points are duplicates (by alias, without ids).
+
 ## 0.3.0
 
 ### Fixed
