@@ -23,6 +23,7 @@ from custom_components.eloverblik_dk.const import (
     CONF_METERING_POINTS,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL_HOURS,
+    CONF_SHOW_ALL,
     DOMAIN,
 )
 from custom_components.eloverblik_dk.diagnostics import (
@@ -124,6 +125,23 @@ def _device_points(hass, entry) -> set[str]:
     }
 
 
+def _offered(form) -> set[str]:
+    selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
+    return {option["value"] for option in selector.config["options"]}
+
+
+def _labels(form) -> dict[str, str]:
+    selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
+    return {option["value"]: option["label"] for option in selector.config["options"]}
+
+
+def _suggested(form) -> list[str]:
+    for key in form["data_schema"].schema:
+        if str(key) == CONF_METERING_POINT_IDS:
+            return list((key.description or {}).get("suggested_value") or [])
+    return []
+
+
 def _selected(entry) -> set[str]:
     return {item["metering_point_id"] for item in entry.data[CONF_METERING_POINTS]}
 
@@ -197,14 +215,39 @@ async def test_options_can_add_and_remove_metering_points(hass, entry) -> None:
     )
     assert form["step_id"] == "metering_points"
     assert not form["errors"]
-    selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
-    offered = {option["value"] for option in selector.config["options"]}
-    assert offered == {point.metering_point_id for point in ALL}
+    # E17 and E18 repeat D07 and D06, so they are neither listed nor selectable.
+    assert _offered(form) == {D07.metering_point_id, D06.metering_point_id}
+    assert set(_offered(form)) <= set(_suggested(form))
+    hidden = form["description_placeholders"]["hidden"]
+    assert "E17" in hidden and "E18" in hidden
+    assert "do not normally need them" in hidden
+    assert CONF_SHOW_ALL in {str(key) for key in form["data_schema"].schema}
+
+    # "Show all" lists them again, marked with the point they repeat.
+    shown = await hass.config_entries.options.async_configure(
+        form["flow_id"],
+        {
+            CONF_METERING_POINT_IDS: [D07.metering_point_id, D06.metering_point_id],
+            CONF_SHOW_ALL: True,
+        },
+    )
+    assert shown["type"] is FlowResultType.FORM
+    assert _offered(shown) == {point.metering_point_id for point in ALL}
+    assert shown["description_placeholders"]["hidden"] == ""
+    labels = _labels(shown)
+    assert "(E17)" in labels[E17.metering_point_id]
+    assert labels[E17.metering_point_id].endswith("same values as D07")
+    assert labels[E18.metering_point_id].endswith("same values as D06")
+    assert "same values" not in labels[D07.metering_point_id]
+    assert set(_suggested(shown)) == {D07.metering_point_id, D06.metering_point_id}
 
     options_before = dict(entry.options)
     result = await hass.config_entries.options.async_configure(
-        form["flow_id"],
-        {CONF_METERING_POINT_IDS: [D07.metering_point_id, D06.metering_point_id]},
+        shown["flow_id"],
+        {
+            CONF_METERING_POINT_IDS: [D07.metering_point_id, D06.metering_point_id],
+            CONF_SHOW_ALL: True,
+        },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
@@ -218,18 +261,25 @@ async def test_options_can_add_and_remove_metering_points(hass, entry) -> None:
     form = await hass.config_entries.options.async_configure(
         menu["flow_id"], {"next_step_id": "metering_points"}
     )
+    # The removed duplicates stay hidden although they are no longer selected.
+    assert _offered(form) == {D07.metering_point_id, D06.metering_point_id}
     empty = await hass.config_entries.options.async_configure(
         form["flow_id"], {CONF_METERING_POINT_IDS: []}
     )
     assert empty["errors"]["base"] == "no_selection"
-    added = await hass.config_entries.options.async_configure(
+    shown = await hass.config_entries.options.async_configure(
         form["flow_id"],
+        {CONF_METERING_POINT_IDS: [D07.metering_point_id], CONF_SHOW_ALL: True},
+    )
+    added = await hass.config_entries.options.async_configure(
+        shown["flow_id"],
         {
             CONF_METERING_POINT_IDS: [
                 D07.metering_point_id,
                 D06.metering_point_id,
                 E18.metering_point_id,
-            ]
+            ],
+            CONF_SHOW_ALL: True,
         },
     )
     assert added["type"] is FlowResultType.CREATE_ENTRY
@@ -248,9 +298,13 @@ async def test_options_still_work_when_elovervblik_is_unreachable(hass, entry) -
         menu["flow_id"], {"next_step_id": "metering_points"}
     )
     assert form["errors"]["base"] == "cannot_connect"
-    selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
-    offered = {option["value"] for option in selector.config["options"]}
-    assert offered == {point.metering_point_id for point in ALL}
+    # The selected points are still listed; the poll's comparison hides E17/E18.
+    assert _offered(form) == {D07.metering_point_id, D06.metering_point_id}
+    shown = await hass.config_entries.options.async_configure(
+        form["flow_id"],
+        {CONF_METERING_POINT_IDS: [D07.metering_point_id], CONF_SHOW_ALL: True},
+    )
+    assert _offered(shown) == {point.metering_point_id for point in ALL}
 
 
 async def test_deleting_a_device_in_the_ui_deselects_its_point(hass, entry) -> None:

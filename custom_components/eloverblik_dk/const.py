@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 DOMAIN = "eloverblik_dk"
 NAME = "ElOverblik (DK)"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 ATTRIBUTION = "Energinet ElOverblik / DataHub"
 ISSUE_URL = "https://github.com/keldbroe/ha-eloverblik/issues"
 DOCS_URL = "https://github.com/keldbroe/ha-eloverblik"
@@ -23,6 +23,7 @@ CONF_METERING_POINT_IDS = "metering_point_ids"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
 CONF_HISTORY_DAYS = "history_days"
 CONF_IMPORT_STATISTICS = "import_statistics"
+CONF_SHOW_ALL = "show_all"
 
 DEFAULT_SCAN_INTERVAL_HOURS = 6
 MIN_SCAN_INTERVAL_HOURS = 1
