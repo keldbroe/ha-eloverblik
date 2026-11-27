@@ -23,7 +23,19 @@ from .const import ATTRIBUTION, DOMAIN
 from .coordinator import ElOverblikCoordinator, ElOverblikData, PointState
 from .statistics import UsageSummary
 
-_KIND = {"consumption": "Forbrug", "export": "Salg/eksport"}
+_KIND = {
+    "consumption": "Forbrug",
+    "export": "Salg/eksport",
+    "production": "Produktion",
+    "other": "Andet",
+}
+_MODEL = {
+    "consumption": "Grid consumption",
+    "export": "Grid export",
+    "production": "Production",
+    "other": "Metering point",
+}
+_SOLAR_DIRECTIONS = frozenset({"export", "production"})
 
 
 def _day(summary: UsageSummary) -> float | None:
@@ -99,7 +111,6 @@ _SENSOR_TYPES: tuple[
             translation_key="latest_data_date",
             device_class=SensorDeviceClass.DATE,
             entity_category=EntityCategory.DIAGNOSTIC,
-            icon="mdi:calendar-clock",
         ),
         _latest_date,
     ),
@@ -146,12 +157,20 @@ class ElOverblikSensor(CoordinatorEntity[ElOverblikCoordinator], SensorEntity):
         self._attr_unique_id = f"{point_id}_{description.key}"
         point = self._state.point
         kind = _KIND.get(point.direction, point.direction)
+        if point.direction == "other":
+            kind = f"{kind} ({point.type_of_mp})"
+        # Icons come from icons.json by translation key. Export and production
+        # use a solar icon instead, except for the diagnostic date.
+        if point.direction in _SOLAR_DIRECTIONS and description.key != (
+            "latest_data_date"
+        ):
+            self._attr_icon = "mdi:solar-power"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, point_id)},
             name=f"{point.address} · {kind}",
             manufacturer="Energinet",
-            model=("Grid export" if point.direction == "export" else "Grid consumption")
-            + f" ({point.type_of_mp})",
+            model=f"{_MODEL.get(point.direction, 'Metering point')} "
+            f"({point.type_of_mp})",
             serial_number=point_id,
             configuration_url="https://eloverblik.dk/welcome",
         )
@@ -169,20 +188,6 @@ class ElOverblikSensor(CoordinatorEntity[ElOverblikCoordinator], SensorEntity):
         if summary is None:
             return None
         return self._reader(summary)
-
-    @property
-    def icon(self) -> str | None:
-        """Use a solar icon for export and a calendar icon for the data date."""
-        if self.entity_description.key == "latest_data_date":
-            return "mdi:calendar-clock"
-        point = self._state.point if self._state is not None else None
-        if point is not None and point.direction == "export":
-            return "mdi:solar-power"
-        if self.entity_description.key == "latest_hour":
-            return "mdi:clock-outline"
-        if self.entity_description.key == "day_total":
-            return "mdi:calendar-today"
-        return "mdi:flash"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

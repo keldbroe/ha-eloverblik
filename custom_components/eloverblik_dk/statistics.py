@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
+import itertools
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,10 +19,13 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from .api import EnergyReading, MeteringPoint
-from .const import DOMAIN, earliest_history_date
+from .const import DOMAIN, TRAILING_REFRESH_DAYS, earliest_history_date
 
 ImportMode = Literal["auto", "append", "rebuild"]
 _CLEAR_TIMEOUT_SECONDS = 60.0
+# Stored sums are rounded to 6 decimals and DataHub sends 3, so a difference
+# above half a watt-hour is a real correction, not rounding noise.
+_CORRECTION_TOLERANCE_KWH = 0.0005
 _PENDING_REBUILD = "pending_statistic_rebuild"
 
 _LOGGER = logging.getLogger(__name__)
@@ -272,7 +277,86 @@ def statistic_name_for(point: MeteringPoint) -> str:
     """Return the name shown in the Energy dashboard statistic picker."""
     if point.direction == "export":
         return f"{point.address} · salg til net (return to grid)"
+    if point.direction == "production":
+        return f"{point.address} · produktion {point.type_of_mp} (production)"
+    if point.direction == "other":
+        return f"{point.address} · måling {point.type_of_mp} (other)"
     return f"{point.address} · forbrug (grid consumption)"
+
+
+def trailing_start(now: datetime, tz: ZoneInfo) -> datetime:
+    """Return the UTC start of the trailing window that is checked each poll."""
+    local_today = now.astimezone(tz).date()
+    first_day = local_today - timedelta(days=TRAILING_REFRESH_DAYS)
+    return datetime.combine(first_day, datetime.min.time(), tzinfo=tz).astimezone(UTC)
+
+
+def plan_sync_statistics(
+    hourly: Sequence[tuple[datetime, float]],
+    stored_rows: Sequence[tuple[datetime, float]],
+    *,
+    last_start: datetime,
+    last_sum: float,
+    compare_from: datetime,
+) -> list[PlannedStatistic]:
+    """Append new hours and repair stored hours that DataHub has changed.
+
+    ``stored_rows`` are ``(start, sum)`` rows the recorder holds from a little
+    before ``compare_from``. An hour's stored value is the difference between
+    its sum and the previous row's sum. From ``compare_from`` on, an hour is
+    rewritten when DataHub now reports a different value, or when it fills an
+    hour that was missing. Everything from the first such hour through the
+    newest hour is then written again with one continuous sum, so no later
+    row is left on an old sum (which would show up as a negative hour).
+
+    A stored hour that DataHub no longer reports keeps its stored value, and a
+    negative fetched hour is ignored, as in a plain append. With no change
+    this is the same as appending after ``last_start``.
+    """
+    fetched: dict[datetime, float] = {}
+    for start, kwh in hourly:
+        hour = floor_utc_hour(start)
+        fetched[hour] = fetched.get(hour, 0.0) + kwh
+    fetched = {hour: kwh for hour, kwh in fetched.items() if kwh >= 0}
+    sums = {floor_utc_hour(start): float(total) for start, total in stored_rows}
+    last_hour = floor_utc_hour(last_start)
+    sums[last_hour] = float(last_sum)
+    rows = sorted(sums.items())
+    stored_delta = {
+        hour: total - previous
+        for (_, previous), (hour, total) in itertools.pairwise(rows)
+    }
+    first_known = rows[0][0]
+    compare_hour = floor_utc_hour(compare_from)
+    first_change: datetime | None = None
+    for hour in sorted(fetched):
+        if hour > last_hour:
+            first_change = hour
+            break
+        if hour < compare_hour or hour <= first_known:
+            continue
+        stored = stored_delta.get(hour)
+        if stored is None or abs(fetched[hour] - stored) > _CORRECTION_TOLERANCE_KWH:
+            first_change = hour
+            break
+    if first_change is None:
+        return []
+    baseline = 0.0
+    for hour, total in rows:
+        if hour >= first_change:
+            break
+        baseline = total
+    hours = sorted(
+        {hour for hour in fetched if hour >= first_change}
+        | {hour for hour, _ in rows if hour >= first_change}
+    )
+    planned: list[PlannedStatistic] = []
+    total = baseline
+    for hour in hours:
+        kwh = fetched[hour] if hour in fetched else stored_delta.get(hour, 0.0)
+        total = round(total + kwh, 6)
+        planned.append(PlannedStatistic(start=hour, state=total, sum=total))
+    return planned
 
 
 def metadata_from_annotations(
@@ -333,8 +417,11 @@ async def async_import_meter_statistics(
     """Import completed hours, rebuilding the cumulative sum when history grows.
 
     ``append`` continues after the newest stored hour and is what the 6-hour
-    poll uses once a full window is in place. ``rebuild`` clears the external
-    statistic and writes one continuous sum across the configured window.
+    poll uses once a full window is in place. It also compares the trailing
+    two weeks with what is stored and rewrites from the first hour DataHub
+    has corrected or filled in late (see ``plan_sync_statistics``).
+    ``rebuild`` clears the external statistic and writes one continuous sum
+    across the configured window.
     ``auto`` rebuilds only when the oldest stored hour is newer than that
     window and older readings are actually available. A lookup or clear
     failure returns ``-1`` so the caller can retry without treating the
@@ -342,39 +429,45 @@ async def async_import_meter_statistics(
     """
     statistic_id = statistic_id_for(point.metering_point_id)
     try:
-        if mode == "append":
-            last_start, last_sum = await _read_last_sum(hass, statistic_id)
-            earliest: datetime | None = last_start
+        last_start, last_sum = await _read_last_sum(hass, statistic_id)
+        replace = mode == "rebuild"
+        if mode == "auto" and last_start is not None:
+            replace = await _async_needs_rebuild(
+                hass,
+                statistic_id,
+                readings,
+                last_start=last_start,
+                history_days=history_days,
+                now=now,
+                tz=tz,
+            )
+        if replace or last_start is None:
+            window = _history_window(
+                readings, history_days=history_days, now=now, tz=tz
+            )
+            hourly = completed_hours(aggregate_hourly(window), now=now.astimezone(UTC))
+            planned = plan_incremental_statistics(hourly, last_start=None, last_sum=0.0)
+            baseline_sum = 0.0
         else:
-            last_start, last_sum, earliest = await _read_bounds(hass, statistic_id)
+            compare_from = trailing_start(now, tz)
+            read_from = min(compare_from, last_start) - timedelta(days=1)
+            stored_rows = await _read_rows(hass, statistic_id, read_from)
+            recent = [reading for reading in readings if reading.start >= read_from]
+            hourly = completed_hours(aggregate_hourly(recent), now=now.astimezone(UTC))
+            planned = plan_sync_statistics(
+                hourly,
+                stored_rows,
+                last_start=last_start,
+                last_sum=last_sum,
+                compare_from=compare_from,
+            )
+            baseline_sum = last_sum
     except StatisticLookupError:
         _LOGGER.warning(
             "Skipping statistics import for %s until the recorder can be read",
             point.metering_point_id,
         )
         return -1
-    replace = mode == "rebuild" or (
-        mode == "auto"
-        and needs_statistic_rebuild(
-            earliest_start=earliest,
-            readings=readings,
-            history_days=history_days,
-            now=now,
-            tz=tz,
-        )
-    )
-    if replace or last_start is None:
-        window = _history_window(readings, history_days=history_days, now=now, tz=tz)
-        baseline_start: datetime | None = None
-        baseline_sum = 0.0
-    else:
-        window = readings
-        baseline_start = last_start
-        baseline_sum = last_sum
-    hourly = completed_hours(aggregate_hourly(window), now=now.astimezone(UTC))
-    planned = plan_incremental_statistics(
-        hourly, last_start=baseline_start, last_sum=baseline_sum
-    )
     if not planned:
         return 0
     metadata = build_statistic_metadata(statistic_name_for(point), statistic_id)
@@ -397,6 +490,13 @@ async def async_import_meter_statistics(
             len(stats),
             point.metering_point_id,
             stats[0]["start"].isoformat(),
+        )
+    elif last_start is not None and planned[0].start <= floor_utc_hour(last_start):
+        _LOGGER.info(
+            "DataHub changed %s from %s; rewrote %s hourly statistics",
+            point.metering_point_id,
+            planned[0].start.isoformat(),
+            len(stats),
         )
     else:
         _LOGGER.debug(
@@ -443,32 +543,92 @@ async def _read_last_sum(hass: Any, statistic_id: str) -> tuple[datetime | None,
     return _last_sum_from_result(result, statistic_id)
 
 
-async def _read_bounds(
-    hass: Any, statistic_id: str
-) -> tuple[datetime | None, float, datetime | None]:
-    """Load the newest sum and the oldest stored hour for one statistic."""
-    last_start, last_sum = await _read_last_sum(hass, statistic_id)
+async def async_last_statistic_start(hass: Any, statistic_id: str) -> datetime | None:
+    """Return the newest stored hour of an external statistic, if any.
+
+    Raises ``StatisticLookupError`` when the recorder cannot be asked.
+    """
+    last_start, _ = await _read_last_sum(hass, statistic_id)
+    return last_start
+
+
+async def _async_needs_rebuild(
+    hass: Any,
+    statistic_id: str,
+    readings: Sequence[EnergyReading],
+    *,
+    last_start: datetime,
+    history_days: int,
+    now: datetime,
+    tz: ZoneInfo,
+) -> bool:
+    """Decide whether stored statistics start later than the fetched window.
+
+    Only rows up to the first fetched hour in the window (or the end of the
+    cutoff day, whichever is later) are read, so the lookup stays small: it
+    returns nothing when a backfill is needed, and only the stored hours
+    older than the window when it is not.
+    """
+    window = _history_window(readings, history_days=history_days, now=now, tz=tz)
+    if not window:
+        return False
+    first_hour = min(floor_utc_hour(reading.start) for reading in window)
+    cutoff = history_cutoff(now, tz, history_days)
+    cutoff_end = datetime.combine(
+        cutoff + timedelta(days=1), datetime.min.time(), tzinfo=tz
+    ).astimezone(UTC)
+    until = max(first_hour + timedelta(hours=1), cutoff_end)
+    oldest = datetime(2000, 1, 1, tzinfo=UTC)
+    rows = await _read_period(hass, statistic_id, oldest, until)
+    earliest = _earliest_start(rows, statistic_id)
+    if earliest is None:
+        # Nothing is stored before ``until``, so the oldest stored hour is
+        # later than that. The newest hour is a safe stand-in for the test.
+        earliest = last_start
+    return needs_statistic_rebuild(
+        earliest_start=earliest,
+        readings=window,
+        history_days=history_days,
+        now=now,
+        tz=tz,
+    )
+
+
+async def _read_rows(
+    hass: Any, statistic_id: str, start: datetime
+) -> list[tuple[datetime, float]]:
+    """Return ``(start, sum)`` for every stored hour from ``start`` on."""
+    result = await _read_period(hass, statistic_id, start, None)
+    rows = (result or {}).get(statistic_id) or []
+    return [
+        (_coerce_utc(row["start"]), float(row.get("sum") or 0.0))
+        for row in rows
+        if row.get("start") is not None
+    ]
+
+
+async def _read_period(
+    hass: Any, statistic_id: str, start: datetime, end: datetime | None
+) -> Mapping[str, Sequence[Mapping[str, Any]]] | None:
+    """Run ``statistics_during_period`` for one statistic and hourly rows."""
     try:
         _, _, during_period, _ = _load_recorder()
     except ImportError as err:
         raise StatisticLookupError("Recorder statistics are unavailable") from err
-    if during_period is None:
-        return last_start, last_sum, None
     try:
-        result = await _invoke(
+        return await _invoke(
             hass,
             during_period,
             hass,
-            datetime(2000, 1, 1, tzinfo=UTC),
-            None,
+            start,
+            end,
             {statistic_id},
             "hour",
             None,
             {"sum"},
         )
     except Exception as err:
-        raise StatisticLookupError("Could not read the oldest statistic") from err
-    return last_start, last_sum, _earliest_start(result, statistic_id)
+        raise StatisticLookupError("Could not read stored statistics") from err
 
 
 def _earliest_start(
@@ -579,8 +739,6 @@ def _load_recorder() -> tuple[Any, Any, Any, Any]:
 
 
 def _is_async(func: Any) -> bool:
-    import inspect
-
     return inspect.iscoroutinefunction(func)
 
 

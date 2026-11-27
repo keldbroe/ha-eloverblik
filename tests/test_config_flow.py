@@ -16,6 +16,7 @@ from custom_components.eloverblik_dk.api import (
     ElOverblikApiError,
     ElOverblikAuthError,
     ElOverblikRateLimitError,
+    MeteringPoint,
     parse_metering_points,
 )
 from custom_components.eloverblik_dk.config_flow import (
@@ -84,6 +85,24 @@ def test_default_selection_prefers_children_over_a_consumption_parent(
     export = next(point for point in points if point.metering_point_id == EXPORT_ID)
     assert "Salg/eksport" in option_label(export, "da")
     assert "Export/sale" in option_label(export, "en")
+    # Production and overlapping children are offered but not preselected.
+    assert "571313174000000001" not in chosen  # D01 VE production
+    assert "571313174000000009" not in chosen  # D09 own production
+    assert "571313174000000012" not in chosen  # D12 total consumption
+    assert "571313174000000018" in chosen  # E18 production point (to grid)
+    assert "571313174000000011" in chosen  # D11 net to grid
+    by_id = {point.metering_point_id: point for point in points}
+    assert "Produktion" in option_label(by_id["571313174000000001"], "da")
+    assert "Other (D12)" in option_label(by_id["571313174000000012"], "en")
+
+
+def test_stored_direction_from_an_older_version_is_corrected(points: list) -> None:
+    """0.2 stored D01 as export; the DataHub type now decides on load."""
+    d01 = next(point for point in points if point.type_of_mp == "D01")
+    stored = {**d01.as_dict(), "direction": "export"}
+    assert MeteringPoint.from_dict(stored).direction == "production"
+    untyped = {"metering_point_id": "1", "direction": "export"}
+    assert MeteringPoint.from_dict(untyped).direction == "export"
 
 
 async def test_user_flow_creates_an_entry(hass, fake_api, points) -> None:
@@ -374,3 +393,40 @@ async def test_options_flow_shrinking_five_year_history_does_not_rebuild(hass) -
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_HISTORY_DAYS] == 730
     assert not statistic_rebuild_requested(hass, entry.entry_id)
+
+
+async def test_points_used_by_another_entry_are_not_offered(
+    hass, fake_api, points
+) -> None:
+    """A second token cannot add a metering point another entry monitors."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="other-account",
+        data={
+            CONF_REFRESH_TOKEN: "first-token",
+            CONF_METERING_POINTS: [points[0].as_dict(), points[1].as_dict()],
+        },
+    )
+    existing.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: "second-token"}
+    )
+    assert result["step_id"] == "metering_points"
+    selector = result["data_schema"].schema[CONF_METERING_POINT_IDS]
+    offered = {option["value"] for option in selector.config["options"]}
+    assert points[0].metering_point_id not in offered
+    assert points[1].metering_point_id not in offered
+    assert points[2].metering_point_id in offered
+
+    fake_api.points = [points[0], points[1]]
+    blocked = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    blocked = await hass.config_entries.flow.async_configure(
+        blocked["flow_id"], {CONF_REFRESH_TOKEN: "third-token"}
+    )
+    assert blocked["type"] is FlowResultType.ABORT
+    assert blocked["reason"] == "already_configured"

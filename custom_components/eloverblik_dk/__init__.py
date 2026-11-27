@@ -10,10 +10,17 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 
 from .api import ElOverblikClient
-from .const import CONF_REFRESH_TOKEN, DOMAIN, SERVICE_REBUILD_STATISTICS
-from .coordinator import ElOverblikCoordinator, ElOverblikRuntime
+from .const import (
+    CONF_REFRESH_TOKEN,
+    DOMAIN,
+    SERVICE_REBUILD_STATISTICS,
+    STORAGE_VERSION,
+)
+from .coordinator import ElOverblikCoordinator, ElOverblikRuntime, storage_key
+from .helpers import ha_time_zone, token_cache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +55,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ElOverblik from a config entry."""
     session = async_get_clientsession(hass)
-    client = ElOverblikClient(entry.data[CONF_REFRESH_TOKEN], session=session)
+    client = ElOverblikClient(
+        entry.data[CONF_REFRESH_TOKEN],
+        session=session,
+        token_cache=token_cache(hass),
+        time_zone=ha_time_zone(hass),
+    )
     coordinator = ElOverblikCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = ElOverblikRuntime(client=client, coordinator=coordinator)
@@ -70,3 +82,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's backfill marker. Imported statistics are kept."""
+    await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()

@@ -1,0 +1,14 @@
+{
+  "entity": {
+    "sensor": {
+      "day_total": { "default": "mdi:calendar-today" },
+      "month_total": { "default": "mdi:flash" },
+      "year_total": { "default": "mdi:flash" },
+      "latest_hour": { "default": "mdi:clock-outline" },
+      "latest_data_date": { "default": "mdi:calendar-clock" }
+    }
+  },
+  "services": {
+    "rebuild_statistics": { "service": "mdi:database-refresh" }
+  }
+}

@@ -18,10 +18,19 @@ class FakeElOverblikClient:
     calls: ClassVar[list[tuple[date, date, str, tuple[str, ...]]]] = []
     tokens: ClassVar[list[str]] = []
 
-    def __init__(self, refresh_token: str, session: object | None = None) -> None:
+    def __init__(
+        self,
+        refresh_token: str,
+        session: object | None = None,
+        *,
+        token_cache: object | None = None,
+        time_zone: object | None = None,
+    ) -> None:
         """Remember the token and ignore the HTTP session."""
         self.refresh_token = refresh_token
         self.session = session
+        self.token_cache = token_cache
+        self.time_zone = time_zone
         type(self).tokens.append(refresh_token)
 
     async def async_get_metering_points(self) -> list[MeteringPoint]:

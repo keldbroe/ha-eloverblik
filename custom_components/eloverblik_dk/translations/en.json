@@ -23,7 +23,7 @@
       },
       "metering_points": {
         "title": "Choose metering points",
-        "description": "Consumption is electricity bought from the grid. Export/sale is electricity delivered to the grid, for example from solar panels. If a parent point and its children are both listed, prefer the children (D07 for grid consumption and D06 for export) so the Energy dashboard does not count the same electricity twice.",
+        "description": "Consumption is electricity bought from the grid. Export/sale is electricity delivered to the grid, for example from solar panels. Production (D01, D09) is everything the panels produce, including what you use yourself, so it is not the same as export. Other points, such as D12 total consumption or D14 electrical heating, overlap the grid points. Only grid points are preselected. If a parent point and its children are both listed, prefer the children (D07 for grid consumption and D06 for export) so the Energy dashboard does not count the same electricity twice. Points another ElOverblik entry already monitors are not listed.",
         "data": {
           "metering_point_ids": "Metering points"
         }
@@ -38,7 +38,7 @@
       "invalid_option": "The polling interval must be between 1 and 24 hours, and the history must be between 1 and 1825 days."
     },
     "abort": {
-      "already_configured": "This ElOverblik account is already configured.",
+      "already_configured": "This ElOverblik account, or every metering point it can see, is already configured.",
       "already_in_progress": "This ElOverblik account is already being configured.",
       "reauth_successful": "The refresh token was updated.",
       "no_metering_points": "This account has no linked metering points. Link a metering point on eloverblik.dk and try again.",

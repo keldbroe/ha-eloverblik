@@ -13,13 +13,22 @@ is false on ``MeteringPointsRequest``).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import time
 from base64 import urlsafe_b64decode
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
@@ -34,9 +43,11 @@ from .const import (
     CONSUMPTION_TYPES,
     DATAHUB_HISTORY_YEARS,
     EXPORT_TYPES,
+    LOCAL_TIME_ZONE,
     MAX_DAYS_PER_CALL,
     MAX_METERING_POINTS_PER_CALL,
     METERING_POINTS_URL,
+    PRODUCTION_TYPES,
     RATE_LIMIT_COOLDOWN_SECONDS,
     RATE_LIMIT_WINDOW_SLACK_SECONDS,
     TIME_SERIES_URL,
@@ -50,8 +61,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-Direction = Literal["consumption", "export"]
-_LOCAL_ZONE = ZoneInfo("Europe/Copenhagen")
+Direction = Literal["consumption", "export", "production", "other"]
+DIRECTIONS: frozenset[str] = frozenset({"consumption", "export", "production", "other"})
+GRID_DIRECTIONS: frozenset[str] = frozenset({"consumption", "export"})
+TokenCache = MutableMapping[str, tuple[str, datetime]]
+_LOCAL_ZONE = ZoneInfo(LOCAL_TIME_ZONE)
 _METERING_POINT_ID = re.compile(r"^\d{18}$")
 _ISO_DURATION = re.compile(
     r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
@@ -142,9 +156,12 @@ class MeteringPoint:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> MeteringPoint:
         """Restore a point stored on the config entry."""
-        type_of_mp = str(data.get("type_of_mp") or "")
+        type_of_mp = str(data.get("type_of_mp") or "").upper()
+        # The DataHub type decides the direction. A stored direction is only
+        # used when the type is missing, so entries saved by older versions
+        # (which called D01/D09 "export") are corrected on load.
         direction = data.get("direction")
-        if direction not in {"consumption", "export"}:
+        if type_of_mp or direction not in DIRECTIONS:
             direction = classify_direction(type_of_mp)
         return cls(
             metering_point_id=str(data.get("metering_point_id") or ""),
@@ -236,9 +253,21 @@ class ElOverblikClient:
         self,
         refresh_token: str,
         session: aiohttp.ClientSession | None = None,
+        *,
+        token_cache: TokenCache | None = None,
+        time_zone: ZoneInfo | None = None,
     ) -> None:
-        """Create a client. A session passed in is not closed by this client."""
+        """Create a client. A session passed in is not closed by this client.
+
+        ``token_cache`` is shared between clients for the same refresh token,
+        so a reload does not exchange the refresh token again. Only a hash of
+        the refresh token is used as the key. ``time_zone`` decides which day
+        is "today" when capping a request; it should match Home Assistant.
+        """
         self._refresh_token = refresh_token.strip()
+        self._token_cache = token_cache
+        self._cache_key = hashlib.sha256(self._refresh_token.encode()).hexdigest()
+        self._zone = time_zone or _LOCAL_ZONE
         self._session = session
         self._owns_session = session is None
         self._access_token: str | None = None
@@ -307,7 +336,7 @@ class ElOverblikClient:
         if date_to < date_from:
             raise ValueError("date_to is before date_from")
         canonical = _canonical_aggregation(aggregation)
-        today = datetime.now(_LOCAL_ZONE).date()
+        today = datetime.now(self._zone).date()
         tomorrow = today + timedelta(days=1)
         earliest = earliest_history_date(today)
         end_inclusive = min(date_to, tomorrow - timedelta(days=1))
@@ -445,6 +474,10 @@ class ElOverblikClient:
         async with self._token_lock:
             if generation != self._token_generation and self._access_token:
                 return self._access_token
+            if self._token_cache is not None:
+                cached = self._token_cache.get(self._cache_key)
+                if cached is not None and cached[0] == self._access_token:
+                    self._token_cache.pop(self._cache_key, None)
             _LOGGER.debug("Data access token was rejected; refreshing once")
             token = await self._exchange_token()
             self._store_token(token)
@@ -456,7 +489,7 @@ class ElOverblikClient:
             assert self._access_token is not None
             return self._access_token
         async with self._token_lock:
-            if not force and self._token_is_fresh():
+            if not force and (self._token_is_fresh() or self._adopt_cached_token()):
                 assert self._access_token is not None
                 return self._access_token
             token = await self._exchange_token()
@@ -468,11 +501,30 @@ class ElOverblikClient:
             return False
         return datetime.now(UTC) < self._access_expiry - TOKEN_REFRESH_SKEW
 
+    def _adopt_cached_token(self) -> bool:
+        """Use a fresh token another client already minted for this account."""
+        if self._token_cache is None:
+            return False
+        cached = self._token_cache.get(self._cache_key)
+        if cached is None:
+            return False
+        token, expiry = cached
+        if datetime.now(UTC) >= expiry - TOKEN_REFRESH_SKEW:
+            self._token_cache.pop(self._cache_key, None)
+            return False
+        if token != self._access_token:
+            self._access_token = token
+            self._access_expiry = expiry
+            self._token_generation += 1
+        return True
+
     def _store_token(self, token: str) -> None:
         expiry = jwt_expiry(token) or (datetime.now(UTC) + TOKEN_LIFETIME)
         self._access_token = token
         self._access_expiry = expiry
         self._token_generation += 1
+        if self._token_cache is not None:
+            self._token_cache[self._cache_key] = (token, expiry)
 
     async def _exchange_token(self) -> str:
         """Exchange the refresh token. Only this call counts against GetToken."""
@@ -551,16 +603,27 @@ class ElOverblikClient:
 
 
 def classify_direction(type_of_mp: str) -> Direction:
-    """Classify a DataHub ``typeOfMP`` as grid consumption or grid export.
+    """Classify a DataHub ``typeOfMP``.
 
-    Unknown codes are treated as consumption and the raw code is kept on the
-    metering point so the user can still see it.
+    ``consumption`` and ``export`` are the grid points the Energy dashboard
+    uses for grid consumption and return to grid. ``production`` is total or
+    own production (for example D01 and D09), which is not the same as what is
+    delivered to the grid. Every other code, including D12 total consumption
+    and D14 electrical heating, is ``other``: those overlap the grid points.
     """
-    if (type_of_mp or "").upper() in EXPORT_TYPES:
+    code = (type_of_mp or "").upper()
+    if code in EXPORT_TYPES:
         return "export"
-    if (type_of_mp or "").upper() in CONSUMPTION_TYPES:
+    if code in CONSUMPTION_TYPES:
         return "consumption"
-    return "consumption"
+    if code in PRODUCTION_TYPES:
+        return "production"
+    return "other"
+
+
+def is_grid_point(point: MeteringPoint) -> bool:
+    """Return whether the point measures grid consumption or return to grid."""
+    return point.direction in GRID_DIRECTIONS
 
 
 def format_address(payload: Mapping[str, Any]) -> str:
@@ -800,7 +863,9 @@ def _choose_series(
     candidates = non_profiled or list(series_list)
     if len(candidates) == 1:
         return candidates[0]
-    preference = _EXPORT_SERIES if direction == "export" else _CONSUMPTION_SERIES
+    preference = (
+        _EXPORT_SERIES if direction in {"export", "production"} else _CONSUMPTION_SERIES
+    )
     by_type = {str(series.get("businessType")): series for series in candidates}
     for code in preference:
         if code in by_type:
