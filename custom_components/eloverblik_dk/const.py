@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 DOMAIN = "eloverblik_dk"
 NAME = "ElOverblik (DK)"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 ATTRIBUTION = "Energinet ElOverblik / DataHub"
 ISSUE_URL = "https://github.com/keldbroe/ha-eloverblik/issues"
 DOCS_URL = "https://github.com/keldbroe/ha-eloverblik"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+
+### Changed
+
+- The metering point lists show the DataHub type, for example **Forbrug (D07)** and **Forbrug (E17)**. Before, a parent and its child looked the same.
+- On the **Metering points** options page, a point that reports the same values as another is marked, for example **samme tal som D07**, so it is clear which one to remove.
+
 ## 0.3.1
 
 ### Fixed

@@ -102,6 +102,13 @@ def test_default_selection_prefers_children_over_a_consumption_parent(
     by_id = {point.metering_point_id: point for point in points}
     assert "Produktion" in option_label(by_id["571313174000000001"], "da")
     assert "Other (D12)" in option_label(by_id["571313174000000012"], "en")
+    # The DataHub type is shown, so a parent and its child can be told apart.
+    assert "Forbrug (E17)" in option_label(parent, "da")
+    assert "Export/sale (D06)" in option_label(export, "en")
+    assert "(D12) (D12)" not in option_label(by_id["571313174000000012"], "en")
+    d07 = by_id["571313174000000077"]
+    assert option_label(parent, "da", same_as=d07).endswith("samme tal som D07")
+    assert option_label(parent, "en", same_as=d07).endswith("same values as D07")
 
 
 def test_stored_direction_from_an_older_version_is_corrected(points: list) -> None:

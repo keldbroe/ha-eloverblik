@@ -200,6 +200,13 @@ async def test_options_can_add_and_remove_metering_points(hass, entry) -> None:
     selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
     offered = {option["value"] for option in selector.config["options"]}
     assert offered == {point.metering_point_id for point in ALL}
+    labels = {o["value"]: o["label"] for o in selector.config["options"]}
+    # The two redundant points say which point they repeat; the kept ones don't.
+    assert "(E17)" in labels[E17.metering_point_id]
+    assert labels[E17.metering_point_id].endswith("same values as D07")
+    assert labels[E18.metering_point_id].endswith("same values as D06")
+    assert "same values" not in labels[D07.metering_point_id]
+    assert "same values" not in labels[D06.metering_point_id]
 
     options_before = dict(entry.options)
     result = await hass.config_entries.options.async_configure(

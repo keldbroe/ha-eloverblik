@@ -100,19 +100,34 @@ def default_metering_point_ids(points: Sequence[MeteringPoint]) -> list[str]:
     return chosen
 
 
-def option_label(point: MeteringPoint, language: str) -> str:
-    """Label a metering point with its address, direction, and id."""
+def option_label(
+    point: MeteringPoint,
+    language: str,
+    *,
+    same_as: MeteringPoint | None = None,
+) -> str:
+    """Label a point with its address, kind, DataHub type and id.
+
+    The type (E17, D07, ...) tells a parent from its child, which otherwise
+    look alike. ``same_as`` adds a note when this point reports the same
+    values as another selected point, so the user can see which one to drop.
+    """
     danish = language.lower().startswith("da")
     if point.direction == "export":
         kind = "Salg/eksport" if danish else "Export/sale"
     elif point.direction == "production":
         kind = "Produktion" if danish else "Production"
     elif point.direction == "other":
-        label = "Andet" if danish else "Other"
-        kind = f"{label} ({point.type_of_mp})"
+        kind = "Andet" if danish else "Other"
     else:
         kind = "Forbrug" if danish else "Consumption"
-    return f"{point.address} — {kind} — {point.metering_point_id}"
+    if point.type_of_mp:
+        kind = f"{kind} ({point.type_of_mp})"
+    label = f"{point.address} — {kind} — {point.metering_point_id}"
+    if same_as is not None:
+        note = "samme tal som" if danish else "same values as"
+        label = f"{label} — {note} {same_as.type_of_mp or same_as.metering_point_id}"
+    return label
 
 
 async def async_fetch_metering_points(
@@ -355,6 +370,7 @@ class ElOverblikOptionsFlow(OptionsFlow):
                 # Options are unchanged, so this does not reload a second time.
                 return self.async_create_entry(title="", data=dict(entry.options))
         language = str(getattr(self.hass.config, "language", "en") or "en")
+        duplicates = self._known_duplicates()
         schema = vol.Schema(
             {
                 vol.Required(CONF_METERING_POINT_IDS): selector.SelectSelector(
@@ -362,7 +378,13 @@ class ElOverblikOptionsFlow(OptionsFlow):
                         options=[
                             {
                                 "value": point.metering_point_id,
-                                "label": option_label(point, language),
+                                "label": option_label(
+                                    point,
+                                    language,
+                                    same_as=known.get(
+                                        duplicates.get(point.metering_point_id, "")
+                                    ),
+                                ),
                             }
                             for point in known.values()
                         ],
@@ -379,6 +401,12 @@ class ElOverblikOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="metering_points", data_schema=schema, errors=errors
         )
+
+    def _known_duplicates(self) -> dict[str, str]:
+        """Return redundant point id -> kept point id from the last poll."""
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        coordinator = getattr(runtime, "coordinator", None)
+        return dict(getattr(coordinator, "duplicates", {}) or {})
 
     async def _async_available_points(self) -> tuple[list[MeteringPoint], str | None]:
         """Load the account's points, reusing the running client when loaded."""
