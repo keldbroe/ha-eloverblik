@@ -71,6 +71,10 @@ async def async_get_config_entry_diagnostics(
             if window
             else None,
             "cached_readings": coordinator.cached_reading_count,
+            "duplicates": {
+                aliases.get(remove, "unknown"): aliases.get(keep, "unknown")
+                for remove, keep in coordinator.duplicates.items()
+            },
         },
         "points": points,
     }

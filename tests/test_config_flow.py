@@ -68,6 +68,14 @@ def fake_api(
     return FakeElOverblikClient
 
 
+async def _open_settings(hass, entry):
+    """Open the options flow and pick the settings page in its menu."""
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    return await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "settings"}
+    )
+
+
 def test_default_selection_prefers_children_over_a_consumption_parent(
     points: list,
 ) -> None:
@@ -264,9 +272,12 @@ async def test_options_flow_saves_interval_history_and_statistics(
         },
     )
     entry.add_to_hass(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    assert menu["type"] is FlowResultType.MENU
+    assert set(menu["menu_options"]) == {"metering_points", "settings"}
+    result = await _open_settings(hass, entry)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["step_id"] == "settings"
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -293,7 +304,7 @@ async def test_options_flow_saves_interval_history_and_statistics(
         },
     )
     shrunk.add_to_hass(hass)
-    shrunk_flow = await hass.config_entries.options.async_init(shrunk.entry_id)
+    shrunk_flow = await _open_settings(hass, shrunk)
     shrunk_flow = await hass.config_entries.options.async_configure(
         shrunk_flow["flow_id"],
         {
@@ -305,7 +316,7 @@ async def test_options_flow_saves_interval_history_and_statistics(
     assert shrunk_flow["type"] is FlowResultType.CREATE_ENTRY
     assert not statistic_rebuild_requested(hass, shrunk.entry_id)
 
-    invalid = await hass.config_entries.options.async_init(entry.entry_id)
+    invalid = await _open_settings(hass, entry)
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
             invalid["flow_id"],
@@ -330,7 +341,7 @@ async def test_options_flow_accepts_multi_year_history(hass, days: int) -> None:
         },
     )
     entry.add_to_hass(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
@@ -357,7 +368,7 @@ async def test_options_flow_rejects_history_past_five_years(hass) -> None:
         },
     )
     entry.add_to_hass(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     with pytest.raises(InvalidData):
         await hass.config_entries.options.async_configure(
             result["flow_id"],
@@ -381,7 +392,7 @@ async def test_options_flow_shrinking_five_year_history_does_not_rebuild(hass) -
         },
     )
     entry.add_to_hass(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await _open_settings(hass, entry)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {

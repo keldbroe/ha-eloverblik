@@ -48,6 +48,21 @@
   "options": {
     "step": {
       "init": {
+        "title": "ElOverblik-indstillinger",
+        "description": "Vælg hvad du vil ændre.",
+        "menu_options": {
+          "metering_points": "Målepunkter",
+          "settings": "Opdateringsinterval og statistik"
+        }
+      },
+      "metering_points": {
+        "title": "Vælg målepunkter",
+        "description": "Tilføj eller fjern målepunkter. Et målepunkt du fjerner, mister sin enhed og sine sensorer, men den statistik der allerede er importeret, bevares. Hvis to målepunkter viser de samme tal (for eksempel E17 og dets D07, eller E18 og D06), så behold kun det ene, så den samme strøm ikke tælles to gange. Målepunkter, som en anden ElOverblik-opsætning bruger, vises ikke.",
+        "data": {
+          "metering_point_ids": "Målepunkter"
+        }
+      },
+      "settings": {
         "title": "Indstillinger for ElOverblik",
         "description": "ElOverblik offentliggør måledata med en forsinkelse på typisk et til tre døgn. Det er nok at hente data med nogle timers mellemrum, og det holder os inden for Energinets grænser.",
         "data": {
@@ -63,7 +78,12 @@
       }
     },
     "error": {
-      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 1825 dage."
+      "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 1825 dage.",
+      "no_selection": "Vælg mindst ét målepunkt.",
+      "invalid_auth": "ElOverblik afviste refresh-tokenet. Kun de målepunkter, der allerede er valgt, vises.",
+      "cannot_connect": "Kunne ikke kontakte ElOverblik. Kun de målepunkter, der allerede er valgt, vises.",
+      "rate_limited": "ElOverblik begrænser forespørgsler lige nu. Kun de målepunkter, der allerede er valgt, vises.",
+      "unknown": "Der skete en uventet fejl. Kun de målepunkter, der allerede er valgt, vises."
     }
   },
   "entity": {
@@ -71,45 +91,83 @@
       "day_total": {
         "name": "Seneste tilgængelige døgn",
         "state_attributes": {
-          "data_date": { "name": "Datadato" },
-          "metering_point_id": { "name": "Målepunkt" },
-          "metering_point_type": { "name": "Målepunktstype" },
-          "type_of_mp": { "name": "DataHub-type" }
+          "data_date": {
+            "name": "Datadato"
+          },
+          "metering_point_id": {
+            "name": "Målepunkt"
+          },
+          "metering_point_type": {
+            "name": "Målepunktstype"
+          },
+          "type_of_mp": {
+            "name": "DataHub-type"
+          }
         }
       },
       "month_total": {
         "name": "Denne måned",
         "state_attributes": {
-          "metering_point_id": { "name": "Målepunkt" },
-          "metering_point_type": { "name": "Målepunktstype" },
-          "type_of_mp": { "name": "DataHub-type" }
+          "metering_point_id": {
+            "name": "Målepunkt"
+          },
+          "metering_point_type": {
+            "name": "Målepunktstype"
+          },
+          "type_of_mp": {
+            "name": "DataHub-type"
+          }
         }
       },
       "year_total": {
         "name": "I år",
         "state_attributes": {
-          "metering_point_id": { "name": "Målepunkt" },
-          "metering_point_type": { "name": "Målepunktstype" },
-          "type_of_mp": { "name": "DataHub-type" }
+          "metering_point_id": {
+            "name": "Målepunkt"
+          },
+          "metering_point_type": {
+            "name": "Målepunktstype"
+          },
+          "type_of_mp": {
+            "name": "DataHub-type"
+          }
         }
       },
       "latest_hour": {
         "name": "Seneste interval",
         "state_attributes": {
-          "period_start": { "name": "Periodestart" },
-          "period_end": { "name": "Periodeslut" },
-          "resolution": { "name": "Opløsning" },
-          "metering_point_id": { "name": "Målepunkt" },
-          "metering_point_type": { "name": "Målepunktstype" },
-          "type_of_mp": { "name": "DataHub-type" }
+          "period_start": {
+            "name": "Periodestart"
+          },
+          "period_end": {
+            "name": "Periodeslut"
+          },
+          "resolution": {
+            "name": "Opløsning"
+          },
+          "metering_point_id": {
+            "name": "Målepunkt"
+          },
+          "metering_point_type": {
+            "name": "Målepunktstype"
+          },
+          "type_of_mp": {
+            "name": "DataHub-type"
+          }
         }
       },
       "latest_data_date": {
         "name": "Seneste datadato",
         "state_attributes": {
-          "metering_point_id": { "name": "Målepunkt" },
-          "metering_point_type": { "name": "Målepunktstype" },
-          "type_of_mp": { "name": "DataHub-type" }
+          "metering_point_id": {
+            "name": "Målepunkt"
+          },
+          "metering_point_type": {
+            "name": "Målepunktstype"
+          },
+          "type_of_mp": {
+            "name": "DataHub-type"
+          }
         }
       }
     }
@@ -118,6 +176,24 @@
     "rebuild_statistics": {
       "name": "Genopbyg statistik",
       "description": "Slet den importerede statistik i Energi-dashboardet, og skriv den igen for den valgte historik (som standard 180 dage) med én sammenhængende akkumuleret sum. Det sker automatisk, når statistikhistorikken sættes op."
+    }
+  },
+  "issues": {
+    "duplicate_metering_point": {
+      "title": "To ElOverblik-målepunkter viser de samme tal",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Stop med at følge det dobbelte målepunkt?",
+            "description": "{remove} leverer præcis de samme timeværdier som {keep}. Det gør DataHub ofte for et overordnet målepunkt og dets undermålepunkt. Beholder du begge, vises de samme tal to gange, og Energi-dashboardet kan tælle den samme strøm med to gange.\n\nBekræft for at stoppe med at følge {remove} og beholde {keep}. Enheden og sensorerne for {remove} fjernes. Statistik, der allerede er importeret, bliver i Home Assistant. Du kan vælge målepunktet igen under integrationens indstillinger."
+          }
+        },
+        "abort": {
+          "entry_not_found": "ElOverblik-opsætningen findes ikke længere.",
+          "already_deselected": "Dette målepunkt er ikke længere valgt.",
+          "last_point": "Det er det sidste valgte målepunkt, så det kan ikke fjernes."
+        }
+      }
     }
   }
 }

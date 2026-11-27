@@ -42,7 +42,13 @@ from .const import (
     MIN_SCAN_INTERVAL_HOURS,
     NAME,
 )
-from .helpers import ha_time_zone, token_cache
+from .helpers import (
+    async_set_selected_points,
+    ha_time_zone,
+    points_in_other_entries,
+    selected_points,
+    token_cache,
+)
 from .statistics import request_statistic_rebuild
 
 _LOGGER = logging.getLogger(__name__)
@@ -289,20 +295,8 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
         return default_metering_point_ids(self._points)
 
     def _points_in_other_entries(self) -> set[str]:
-        """Return metering points another ElOverblik entry already monitors.
-
-        The same point in two entries would create two devices with the same
-        identifiers and write one external statistic from two places.
-        """
         current_id = self._get_reauth_entry().entry_id if self._reauth else None
-        taken: set[str] = set()
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if entry.entry_id == current_id:
-                continue
-            for item in entry.data.get(CONF_METERING_POINTS, []):
-                if isinstance(item, dict) and item.get("metering_point_id"):
-                    taken.add(str(item["metering_point_id"]))
-        return taken
+        return points_in_other_entries(self.hass, current_id)
 
     def _unique_id_conflict(self, unique_id: str) -> ConfigEntry | None:
         existing = self.hass.config_entries.async_entry_for_domain_unique_id(
@@ -318,12 +312,102 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ElOverblikOptionsFlow(OptionsFlow):
-    """Change how often data is fetched and how far back statistics go."""
+    """Change the selected metering points, polling and statistics history."""
+
+    def __init__(self) -> None:
+        """Start without a list of available points."""
+        self._available: list[MeteringPoint] = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the options form."""
+        """Offer the two option pages."""
+        return self.async_show_menu(
+            step_id="init", menu_options=["metering_points", "settings"]
+        )
+
+    async def async_step_metering_points(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add or remove metering points without setting the entry up again.
+
+        Deselected points lose their device and sensors; their imported
+        statistics stay in the recorder. Points another entry monitors are
+        not offered.
+        """
+        errors: dict[str, str] = {}
+        entry = self.config_entry
+        current = selected_points(entry)
+        if not self._available:
+            self._available, fetch_error = await self._async_available_points()
+            if fetch_error:
+                errors["base"] = fetch_error
+        known = {point.metering_point_id: point for point in self._available}
+        for point in current:
+            known.setdefault(point.metering_point_id, point)
+        if user_input is not None:
+            chosen_ids = list(user_input.get(CONF_METERING_POINT_IDS) or [])
+            chosen = [known[mpid] for mpid in chosen_ids if mpid in known]
+            if not chosen:
+                errors["base"] = "no_selection"
+            else:
+                async_set_selected_points(self.hass, entry, chosen)
+                # Options are unchanged, so this does not reload a second time.
+                return self.async_create_entry(title="", data=dict(entry.options))
+        language = str(getattr(self.hass.config, "language", "en") or "en")
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_METERING_POINT_IDS): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            {
+                                "value": point.metering_point_id,
+                                "label": option_label(point, language),
+                            }
+                            for point in known.values()
+                        ],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                )
+            }
+        )
+        schema = self.add_suggested_values_to_schema(
+            schema,
+            {CONF_METERING_POINT_IDS: [p.metering_point_id for p in current]},
+        )
+        return self.async_show_form(
+            step_id="metering_points", data_schema=schema, errors=errors
+        )
+
+    async def _async_available_points(self) -> tuple[list[MeteringPoint], str | None]:
+        """Load the account's points, reusing the running client when loaded."""
+        entry = self.config_entry
+        runtime = getattr(entry, "runtime_data", None)
+        client = getattr(runtime, "client", None)
+        try:
+            if client is not None:
+                points = await client.async_get_metering_points()
+            else:
+                points = await async_fetch_metering_points(
+                    self.hass, entry.data[CONF_REFRESH_TOKEN]
+                )
+        except ElOverblikAuthError:
+            return [], "invalid_auth"
+        except ElOverblikRateLimitError:
+            return [], "rate_limited"
+        except ElOverblikApiError:
+            return [], "cannot_connect"
+        except Exception:
+            _LOGGER.exception("Unexpected error contacting ElOverblik")
+            return [], "unknown"
+        taken = points_in_other_entries(self.hass, entry.entry_id)
+        return [p for p in points if p.metering_point_id not in taken], None
+
+    async def async_step_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change polling, statistics history and the statistics import."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -382,9 +466,10 @@ class ElOverblikOptionsFlow(OptionsFlow):
             CONF_HISTORY_DAYS: options.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS),
             CONF_IMPORT_STATISTICS: options.get(CONF_IMPORT_STATISTICS, True),
         }
-        if hasattr(self, "add_suggested_values_to_schema"):
-            schema = self.add_suggested_values_to_schema(schema, suggested)
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        schema = self.add_suggested_values_to_schema(schema, suggested)
+        return self.async_show_form(
+            step_id="settings", data_schema=schema, errors=errors
+        )
 
 
 def _option_int(value: Any, default: int) -> int:
