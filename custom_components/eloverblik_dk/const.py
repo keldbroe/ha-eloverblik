@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 DOMAIN = "eloverblik_dk"
 NAME = "ElOverblik (DK)"
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 ATTRIBUTION = "Energinet ElOverblik / DataHub"
 ISSUE_URL = "https://github.com/keldbroe/ha-eloverblik/issues"
 DOCS_URL = "https://github.com/keldbroe/ha-eloverblik"
@@ -50,8 +50,25 @@ RATE_LIMIT_WINDOW_SLACK_SECONDS = 1.0
 # Trailing window re-read on later polls so late DataHub deliveries are picked up.
 TRAILING_REFRESH_DAYS = 14
 
-CONSUMPTION_TYPES = frozenset({"E17", "D07", "D12"})
-EXPORT_TYPES = frozenset({"D06", "E18", "D01", "D09", "D11"})
+# DataHub ``typeOfMP`` codes, grouped by what they measure.
+# Grid consumption: E17 consumption point, D07 consumption from grid,
+# D10 net from grid.
+CONSUMPTION_TYPES = frozenset({"E17", "D07", "D10"})
+# Return to grid: E18 production point (what the installation delivers),
+# D06 supply to grid, D11 net to grid.
+EXPORT_TYPES = frozenset({"E18", "D06", "D11"})
+# Production that is not grid export: D01 VE production, D04 surplus
+# production group 6, D05 net production, D09 own production.
+PRODUCTION_TYPES = frozenset({"D01", "D04", "D05", "D09"})
+# Anything else (D12 total consumption, D14 electrical heating, D15 net
+# consumption, D02 analysis, ...) is classified as "other". It can still be
+# selected, but it is never preselected and is not labelled as grid usage,
+# because it overlaps the grid points and would be counted twice.
+
+# Access tokens are shared across clients for the same refresh token, so a
+# reload or the config flow followed by setup does not spend GetToken calls.
+TOKEN_CACHE_KEY = "access_tokens"
+STORAGE_VERSION = 1
 
 LOCAL_TIME_ZONE = "Europe/Copenhagen"
 AGGREGATION_ACTUAL = "Actual"

@@ -34,12 +34,24 @@ from custom_components.eloverblik_dk.statistics import (
     metadata_from_annotations,
     needs_statistic_rebuild,
     plan_incremental_statistics,
+    plan_sync_statistics,
     resolution_from_duration,
     statistic_id_for,
     summarize_usage,
 )
 
 TZ = ZoneInfo("Europe/Copenhagen")
+
+
+def _in_range(rows, start, end):
+    """Filter stub recorder rows to ``start <= row < end`` like the recorder."""
+    return [
+        row
+        for row in rows
+        if row["start"] >= start and (end is None or row["start"] < end)
+    ]
+
+
 NOW = datetime(2026, 11, 26, 12, 0, tzinfo=TZ)
 POINT = MeteringPoint(
     metering_point_id="571313174000000017",
@@ -262,9 +274,10 @@ async def test_import_appends_without_rewriting_when_recorder_has_a_sum(
         captured["stats"] = list(stats)
 
     def during(hass, start, end, statistic_ids, period, units, types):
-        del hass, start, end, period, units, types
+        del hass, period, units, types
         statistic_id = next(iter(statistic_ids))
-        return {statistic_id: [{"start": datetime(2026, 1, 1, tzinfo=UTC), "sum": 0.0}]}
+        row = {"start": datetime(2026, 1, 1, tzinfo=UTC), "sum": 0.0}
+        return {statistic_id: _in_range([row], start, end)}
 
     monkeypatch.setattr(
         "custom_components.eloverblik_dk.statistics._load_recorder",
@@ -349,7 +362,7 @@ def test_lookup_error_is_an_exception() -> None:
 
 def test_default_history_is_half_a_year() -> None:
     """New installations import 180 days, bounded by 1 and 1825."""
-    assert VERSION == "0.2.1"
+    assert VERSION == "0.3.0"
     assert DEFAULT_HISTORY_DAYS == 180
     assert MIN_HISTORY_DAYS == 1
     assert MAX_HISTORY_DAYS == 1825
@@ -461,15 +474,12 @@ async def test_existing_30_day_statistics_backfill_to_a_continuous_180_day_sum(
         return {statistic_id_arg: [newest]}
 
     def during(hass, start, end, statistic_ids, period, units, types):
-        del hass, start, end, period, units, types
+        del hass, period, units, types
         nonlocal during_calls
         during_calls += 1
         statistic_id_arg = next(iter(statistic_ids))
-        rows = list(stored.get(statistic_id_arg) or [])
-        if not rows:
-            return {}
-        oldest = min(rows, key=lambda row: row["start"])
-        return {statistic_id_arg: [oldest]}
+        rows = _in_range(stored.get(statistic_id_arg) or [], start, end)
+        return {statistic_id_arg: rows} if rows else {}
 
     def add(hass, metadata, stats):
         del hass
@@ -567,7 +577,9 @@ async def test_existing_30_day_statistics_backfill_to_a_continuous_180_day_sum(
     assert written == 1
     assert order == ["clear", "add", "add"]
     assert stored[statistic_id][-1]["sum"] == pytest.approx(17.0)
-    assert during_calls == 2
+    # One bounded "oldest hour" lookup per auto import, plus the trailing
+    # rows the second (non-rebuild) import compares against.
+    assert during_calls == 3
 
     written = await async_import_meter_statistics(
         hass,
@@ -580,7 +592,7 @@ async def test_existing_30_day_statistics_backfill_to_a_continuous_180_day_sum(
     )
     assert written == 0
     assert order == ["clear", "add", "add"]
-    assert during_calls == 2
+    assert during_calls == 4
 
 
 def _reading_on(year: int, month: int, day: int, kwh: float) -> EnergyReading:
@@ -640,13 +652,10 @@ async def test_multi_year_import_keeps_a_continuous_sum(
         return {statistic_id_arg: [newest]}
 
     def during(hass, start, end, statistic_ids, period, units, types):
-        del hass, start, end, period, units, types
+        del hass, period, units, types
         statistic_id_arg = next(iter(statistic_ids))
-        rows = list(stored.get(statistic_id_arg) or [])
-        if not rows:
-            return {}
-        oldest = min(rows, key=lambda row: row["start"])
-        return {statistic_id_arg: [oldest]}
+        rows = _in_range(stored.get(statistic_id_arg) or [], start, end)
+        return {statistic_id_arg: rows} if rows else {}
 
     def add(hass, metadata, stats):
         del hass
@@ -703,3 +712,169 @@ async def test_multi_year_import_keeps_a_continuous_sum(
         date(2026, 11, 24),
     ]
     assert [row["sum"] for row in two_years] == pytest.approx([4.0, 12.0])
+
+
+def _hour(day: int, hour: int) -> datetime:
+    return datetime(2026, 11, day, hour, tzinfo=UTC)
+
+
+def _stored(*pairs: tuple[datetime, float]) -> list[tuple[datetime, float]]:
+    """Turn ``(start, kwh)`` pairs into ``(start, sum)`` rows."""
+    total = 0.0
+    rows: list[tuple[datetime, float]] = []
+    for start, kwh in pairs:
+        total += kwh
+        rows.append((start, total))
+    return rows
+
+
+def test_sync_without_changes_is_a_plain_append() -> None:
+    """Unchanged hours are left alone and only newer hours are written."""
+    rows = _stored((_hour(20, 0), 1.0), (_hour(20, 1), 2.0))
+    hourly = [(_hour(20, 0), 1.0), (_hour(20, 1), 2.0), (_hour(20, 2), 0.5)]
+    planned = plan_sync_statistics(
+        hourly,
+        rows,
+        last_start=_hour(20, 1),
+        last_sum=3.0,
+        compare_from=_hour(13, 0),
+    )
+    assert [(item.start, item.sum) for item in planned] == [(_hour(20, 2), 3.5)]
+    assert not plan_sync_statistics(
+        hourly[:2],
+        rows,
+        last_start=_hour(20, 1),
+        last_sum=3.0,
+        compare_from=_hour(13, 0),
+    )
+
+
+def test_sync_rewrites_from_a_corrected_hour_with_one_continuous_sum() -> None:
+    """A DataHub correction moves every later sum, so none goes negative."""
+    rows = _stored((_hour(20, 0), 1.0), (_hour(20, 1), 2.0), (_hour(20, 2), 3.0))
+    hourly = [
+        (_hour(20, 0), 1.0),
+        (_hour(20, 1), 1.5),
+        (_hour(20, 2), 3.0),
+        (_hour(20, 3), 1.0),
+    ]
+    planned = plan_sync_statistics(
+        hourly,
+        rows,
+        last_start=_hour(20, 2),
+        last_sum=6.0,
+        compare_from=_hour(13, 0),
+    )
+    assert [(item.start, item.sum) for item in planned] == [
+        (_hour(20, 1), 2.5),
+        (_hour(20, 2), 5.5),
+        (_hour(20, 3), 6.5),
+    ]
+    assert all(item.state == item.sum for item in planned)
+
+
+def test_sync_fills_an_hour_that_arrived_late() -> None:
+    """An hour missing when it was first written is added when it appears."""
+    rows = _stored((_hour(20, 0), 1.0), (_hour(20, 2), 3.0))
+    hourly = [(_hour(20, 0), 1.0), (_hour(20, 1), 0.25), (_hour(20, 2), 3.0)]
+    planned = plan_sync_statistics(
+        hourly,
+        rows,
+        last_start=_hour(20, 2),
+        last_sum=4.0,
+        compare_from=_hour(13, 0),
+    )
+    assert [(item.start, item.sum) for item in planned] == [
+        (_hour(20, 1), 1.25),
+        (_hour(20, 2), 4.25),
+    ]
+
+
+def test_sync_keeps_stored_hours_datahub_no_longer_reports() -> None:
+    """A stored hour missing from the new download keeps its stored value."""
+    rows = _stored((_hour(20, 0), 1.0), (_hour(20, 1), 2.0), (_hour(20, 2), 3.0))
+    hourly = [(_hour(20, 0), 1.0), (_hour(20, 1), 1.0)]
+    planned = plan_sync_statistics(
+        hourly,
+        rows,
+        last_start=_hour(20, 2),
+        last_sum=6.0,
+        compare_from=_hour(13, 0),
+    )
+    assert [(item.start, item.sum) for item in planned] == [
+        (_hour(20, 1), 2.0),
+        (_hour(20, 2), 5.0),
+    ]
+
+
+def test_sync_ignores_changes_before_the_trailing_window() -> None:
+    """Hours older than the trailing window are not compared or rewritten."""
+    rows = _stored((_hour(1, 0), 1.0), (_hour(1, 1), 2.0), (_hour(20, 0), 1.0))
+    hourly = [(_hour(1, 1), 9.0), (_hour(20, 0), 1.0)]
+    assert not plan_sync_statistics(
+        hourly,
+        rows,
+        last_start=_hour(20, 0),
+        last_sum=4.0,
+        compare_from=_hour(13, 0),
+    )
+
+
+@pytest.mark.asyncio
+async def test_append_import_repairs_a_corrected_hour_in_the_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The append import reads the trailing rows and upserts the corrected run."""
+    statistic_id = statistic_id_for(POINT.metering_point_id)
+    stored = {
+        statistic_id: [
+            {"start": _hour(20, 0), "sum": 101.0, "state": 101.0},
+            {"start": _hour(20, 1), "sum": 103.0, "state": 103.0},
+            {"start": _hour(20, 2), "sum": 106.0, "state": 106.0},
+        ]
+    }
+    added: list[list[dict[str, object]]] = []
+
+    def get_last(hass, number, statistic_id_arg, convert, types):
+        del hass, number, convert, types
+        rows = stored.get(statistic_id_arg) or []
+        return {statistic_id_arg: [max(rows, key=lambda row: row["start"])]}
+
+    def during(hass, start, end, statistic_ids, period, units, types):
+        del hass, period, units, types
+        statistic_id_arg = next(iter(statistic_ids))
+        return {statistic_id_arg: _in_range(stored[statistic_id_arg], start, end)}
+
+    def add(hass, metadata, stats):
+        del hass, metadata
+        added.append(list(stats))
+
+    def no_clear(hass):
+        raise AssertionError("a correction must not clear the statistic")
+
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.statistics._load_recorder",
+        lambda: (get_last, add, during, no_clear),
+    )
+    readings = [
+        EnergyReading(POINT.metering_point_id, start, timedelta(hours=1), kwh)
+        for start, kwh in (
+            (_hour(20, 0), 1.0),
+            (_hour(20, 1), 2.5),
+            (_hour(20, 2), 3.0),
+        )
+    ]
+    written = await async_import_meter_statistics(
+        object(),
+        POINT,
+        readings,
+        history_days=180,
+        now=NOW,
+        tz=TZ,
+        mode="append",
+    )
+    assert written == 2
+    assert [(row["start"], row["sum"]) for row in added[0]] == [
+        (_hour(20, 1), pytest.approx(103.5)),
+        (_hour(20, 2), pytest.approx(106.5)),
+    ]

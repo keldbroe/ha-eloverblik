@@ -140,13 +140,17 @@ def test_metering_points_classify_parent_and_children(metering_payload: dict) ->
     assert by_id[EXPORT_CHILD_ID].type_of_mp == "D06"
     assert by_id[EXPORT_CHILD_ID].meter_reading_occurrence == "PT15M"
     assert by_id[PRODUCTION_ID].direction == "export"
-    assert by_id["571313174000000001"].direction == "export"
-    assert by_id["571313174000000012"].direction == "consumption"
-    assert by_id["571313174000000009"].direction == "export"
+    # D01 VE production and D09 own production are not grid export, and
+    # D12 total consumption overlaps the grid consumption points.
+    assert by_id["571313174000000001"].direction == "production"
+    assert by_id["571313174000000012"].direction == "other"
+    assert by_id["571313174000000009"].direction == "production"
     assert by_id["571313174000000011"].direction == "export"
     assert by_id[EXPORT_CHILD_ID].address == "Nørregade 12, 2 tv, 8000 Aarhus C"
     assert by_id[EXPORT_CHILD_ID].parent_metering_point_id == CONSUMPTION_ID
-    assert classify_direction("D99") == "consumption"
+    assert classify_direction("D99") == "other"
+    assert classify_direction("d10") == "consumption"
+    assert classify_direction("D14") == "other"
 
 
 def test_hourly_document_skips_gaps_missing_quality_and_profiled_series() -> None:
@@ -282,6 +286,54 @@ async def test_token_is_cached_until_it_nears_expiry(metering_payload: dict) -> 
         finally:
             await client.async_close()
         assert len(_calls(mocked, "GET", "/api/token")) == 2
+
+
+@pytest.mark.asyncio
+async def test_token_cache_is_shared_between_clients(metering_payload: dict) -> None:
+    """A reload (a new client) reuses the token, keyed by a hash, not the secret."""
+    url = f"{METERING_POINTS_URL}?includeAll=false"
+    cache: dict = {}
+    with aioresponses() as mocked:
+        mocked.get(TOKEN_URL, payload={"result": _jwt(time.time() + 7200)})
+        mocked.get(url, payload=metering_payload, repeat=True)
+        for _ in range(3):
+            client = ElOverblikClient(
+                "refresh-token-should-stay-secret", token_cache=cache
+            )
+            try:
+                await client.async_get_metering_points()
+            finally:
+                await client.async_close()
+        assert len(_calls(mocked, "GET", "/api/token")) == 1
+    assert len(cache) == 1
+    assert "refresh-token-should-stay-secret" not in next(iter(cache))
+
+
+@pytest.mark.asyncio
+async def test_rejected_cached_token_is_replaced_for_every_client(
+    metering_payload: dict,
+) -> None:
+    """A cached token that is rejected is dropped and replaced, not reused."""
+    url = f"{METERING_POINTS_URL}?includeAll=false"
+    cache: dict = {}
+    stale = _jwt(time.time() + 7200)
+    fresh = _jwt(time.time() + 7300)
+    with aioresponses() as mocked:
+        mocked.get(TOKEN_URL, payload={"result": stale})
+        mocked.get(url, payload=metering_payload)
+        mocked.get(url, status=401)
+        mocked.get(TOKEN_URL, payload={"result": fresh})
+        mocked.get(url, payload=metering_payload, repeat=True)
+        first = ElOverblikClient("refresh-token", token_cache=cache)
+        await first.async_get_metering_points()
+        second = ElOverblikClient("refresh-token", token_cache=cache)
+        await second.async_get_metering_points()
+        assert next(iter(cache.values()))[0] == fresh
+        third = ElOverblikClient("refresh-token", token_cache=cache)
+        await third.async_get_metering_points()
+        assert len(_calls(mocked, "GET", "/api/token")) == 2
+        for client in (first, second, third):
+            await client.async_close()
 
 
 @pytest.mark.asyncio

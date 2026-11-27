@@ -238,3 +238,88 @@ async def test_rebuild_statistics_service_fetches_the_full_window(
     assert FakeElOverblikClient.calls[-1][0] == date(2026, 1, 1)
     assert FakeElOverblikClient.calls[-1][2] == "Actual"
     assert modes == ["rebuild", "rebuild"]
+
+
+PRODUCTION = MeteringPoint(
+    metering_point_id="571313174000000001",
+    type_of_mp="D01",
+    direction="production",
+    address="Nørregade 12, 8000 Aarhus C",
+    meter_reading_occurrence="PT1H",
+    parent_metering_point_id=CONSUMPTION.metering_point_id,
+)
+
+
+async def test_production_point_is_not_labelled_as_export(
+    hass, configured_entry
+) -> None:
+    """A D01 point is its own production device with a solar icon."""
+    FakeElOverblikClient.points = [CONSUMPTION, EXPORT, PRODUCTION]
+    FakeElOverblikClient.readings.append(
+        _reading(PRODUCTION, datetime(2026, 11, 24, 11, tzinfo=UTC), 1.2)
+    )
+    hass.config_entries.async_update_entry(
+        configured_entry,
+        data={
+            **configured_entry.data,
+            CONF_METERING_POINTS: [
+                CONSUMPTION.as_dict(),
+                # Stored by 0.2 as export; the D01 type corrects it.
+                {**PRODUCTION.as_dict(), "direction": "export"},
+            ],
+        },
+    )
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    assert await hass.config_entries.async_setup(configured_entry.entry_id)
+    await hass.async_block_till_done()
+
+    day = hass.states.get(_entity_id(hass, f"{PRODUCTION.metering_point_id}_day_total"))
+    assert day.attributes["metering_point_type"] == "production"
+    assert day.attributes["icon"] == "mdi:solar-power"
+    consumption_day = hass.states.get(
+        _entity_id(hass, f"{CONSUMPTION.metering_point_id}_day_total")
+    )
+    assert "icon" not in consumption_day.attributes
+    names = {
+        device.name
+        for device in dr.async_entries_for_config_entry(
+            dr.async_get(hass), configured_entry.entry_id
+        )
+    }
+    assert "Nørregade 12, 8000 Aarhus C · Produktion" in names
+
+
+async def test_diagnostics_redact_the_token_and_the_household(
+    hass, configured_entry
+) -> None:
+    """Diagnostics can be pasted in a public issue."""
+    from custom_components.eloverblik_dk.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    assert await hass.config_entries.async_setup(configured_entry.entry_id)
+    await hass.async_block_till_done()
+    result = await async_get_config_entry_diagnostics(hass, configured_entry)
+    text = repr(result)
+    assert "token" not in result["entry"]["data"].get(CONF_REFRESH_TOKEN, "")
+    assert CONSUMPTION.metering_point_id not in text
+    assert "Nørregade" not in text
+    assert set(result["points"]) == {"point_1", "point_2"}
+    assert result["points"]["point_1"]["type_of_mp"] == "E17"
+    assert result["coordinator"]["last_fetch_window"] == ["2026-01-01", "2026-11-26"]
+    assert result["coordinator"]["cached_readings"] == 5
+
+
+async def test_removing_the_entry_deletes_the_backfill_marker(
+    hass, configured_entry, hass_storage
+) -> None:
+    """The .storage marker goes with the entry; statistics are not touched."""
+    key = f"{DOMAIN}.{configured_entry.entry_id}"
+    hass_storage[key] = {"version": 1, "data": {"covered_from": {}}}
+    await hass.config.async_set_time_zone("Europe/Copenhagen")
+    assert await hass.config_entries.async_setup(configured_entry.entry_id)
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_remove(configured_entry.entry_id)
+    await hass.async_block_till_done()
+    assert key not in hass_storage

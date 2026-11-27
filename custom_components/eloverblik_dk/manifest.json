@@ -11,5 +11,5 @@
   "issue_tracker": "https://github.com/keldbroe/ha-eloverblik/issues",
   "loggers": ["custom_components.eloverblik_dk"],
   "requirements": [],
-  "version": "0.2.1"
+  "version": "0.3.0"
 }

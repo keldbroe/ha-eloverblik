@@ -23,7 +23,7 @@
       },
       "metering_points": {
         "title": "Vælg målepunkter",
-        "description": "Forbrug er strøm købt fra nettet. Salg/eksport er strøm leveret til nettet, for eksempel fra solceller. Hvis både et overordnet målepunkt og dets undermålepunkter vises, så vælg undermålepunkterne (D07 til forbrug fra net og D06 til salg), så Energi-dashboardet ikke tæller den samme strøm med to gange.",
+        "description": "Forbrug er strøm købt fra nettet. Salg/eksport er strøm leveret til nettet, for eksempel fra solceller. Produktion (D01, D09) er alt hvad anlægget producerer, også det du selv bruger, så det er ikke det samme som salg. Andre målepunkter, som D12 samlet forbrug eller D14 elvarme, overlapper netmålepunkterne. Kun netmålepunkter er valgt på forhånd. Hvis både et overordnet målepunkt og dets undermålepunkter vises, så vælg undermålepunkterne (D07 til forbrug fra net og D06 til salg), så Energi-dashboardet ikke tæller den samme strøm med to gange. Målepunkter, som en anden ElOverblik-opsætning allerede bruger, vises ikke.",
         "data": {
           "metering_point_ids": "Målepunkter"
         }
@@ -38,7 +38,7 @@
       "invalid_option": "Opdateringsintervallet skal være mellem 1 og 24 timer, og historikken skal være mellem 1 og 1825 dage."
     },
     "abort": {
-      "already_configured": "Denne ElOverblik-konto er allerede tilføjet.",
+      "already_configured": "Denne ElOverblik-konto, eller alle de målepunkter den kan se, er allerede tilføjet.",
       "already_in_progress": "Denne ElOverblik-konto er allerede ved at blive tilføjet.",
       "reauth_successful": "Refresh-tokenet er opdateret.",
       "no_metering_points": "Der er ingen tilknyttede målepunkter på kontoen. Knyt et målepunkt til kontoen på eloverblik.dk, og prøv igen.",

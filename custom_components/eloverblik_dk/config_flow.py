@@ -24,6 +24,7 @@ from .api import (
     ElOverblikClient,
     ElOverblikRateLimitError,
     MeteringPoint,
+    is_grid_point,
 )
 from .const import (
     CONF_HISTORY_DAYS,
@@ -41,6 +42,7 @@ from .const import (
     MIN_SCAN_INTERVAL_HOURS,
     NAME,
 )
+from .helpers import ha_time_zone, token_cache
 from .statistics import request_statistic_rebuild
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,12 +67,14 @@ def account_unique_id(points: Sequence[MeteringPoint]) -> str:
 
 
 def default_metering_point_ids(points: Sequence[MeteringPoint]) -> list[str]:
-    """Preselect export points and consumption points that are not parents.
+    """Preselect grid points, leaving out a consumption parent with children.
 
-    A parent E17 together with its D07 (grid consumption) and D06 (grid export)
-    children would double-count in the Energy dashboard. The parent is left
-    unselected when it has children. A home with only an E17 still gets that
-    point selected.
+    Only grid consumption (E17, D07, D10) and return to grid (E18, D06, D11)
+    are preselected. Production such as D01/D09 and other children such as
+    D12 total consumption overlap those and would be counted twice, so the
+    user has to pick them on purpose. A parent E17 is left unselected when it
+    has children, because its D07 child already measures grid consumption. A
+    home with only an E17 still gets that point selected.
     """
     parent_ids = {
         point.parent_metering_point_id
@@ -80,7 +84,8 @@ def default_metering_point_ids(points: Sequence[MeteringPoint]) -> list[str]:
     chosen = [
         point.metering_point_id
         for point in points
-        if not (
+        if is_grid_point(point)
+        and not (
             point.metering_point_id in parent_ids and point.direction == "consumption"
         )
     ]
@@ -94,6 +99,11 @@ def option_label(point: MeteringPoint, language: str) -> str:
     danish = language.lower().startswith("da")
     if point.direction == "export":
         kind = "Salg/eksport" if danish else "Export/sale"
+    elif point.direction == "production":
+        kind = "Produktion" if danish else "Production"
+    elif point.direction == "other":
+        label = "Andet" if danish else "Other"
+        kind = f"{label} ({point.type_of_mp})"
     else:
         kind = "Forbrug" if danish else "Consumption"
     return f"{point.address} — {kind} — {point.metering_point_id}"
@@ -105,7 +115,12 @@ async def async_fetch_metering_points(
 ) -> list[MeteringPoint]:
     """Validate a refresh token by loading the account's metering points."""
     session = async_get_clientsession(hass)
-    client = ElOverblikClient(refresh_token, session=session)
+    client = ElOverblikClient(
+        refresh_token,
+        session=session,
+        token_cache=token_cache(hass),
+        time_zone=ha_time_zone(hass),
+    )
     return await client.async_get_metering_points()
 
 
@@ -118,6 +133,7 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
         """Start a flow with no token yet."""
         self._refresh_token: str | None = None
         self._points: list[MeteringPoint] = []
+        self._account_id: str | None = None
         self._reauth = False
 
     @staticmethod
@@ -179,7 +195,16 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
                     conflict = self._unique_id_conflict(unique_id)
                     if conflict is not None:
                         return self.async_abort(reason="already_configured")
+                    taken = self._points_in_other_entries()
+                    points = [
+                        point
+                        for point in points
+                        if point.metering_point_id not in taken
+                    ]
+                    if not points:
+                        return self.async_abort(reason="already_configured")
                     await self.async_set_unique_id(unique_id)
+                    self._account_id = unique_id
                     self._refresh_token = token
                     self._points = points
                     return await self.async_step_metering_points()
@@ -209,7 +234,7 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
                 if self._reauth:
                     return self.async_update_reload_and_abort(
                         self._get_reauth_entry(),
-                        unique_id=account_unique_id(self._points),
+                        unique_id=self._account_id,
                         data_updates=data,
                     )
                 return self.async_create_entry(
@@ -262,6 +287,22 @@ class ElOverblikConfigFlow(ConfigFlow, domain=DOMAIN):
             if previous:
                 return previous
         return default_metering_point_ids(self._points)
+
+    def _points_in_other_entries(self) -> set[str]:
+        """Return metering points another ElOverblik entry already monitors.
+
+        The same point in two entries would create two devices with the same
+        identifiers and write one external statistic from two places.
+        """
+        current_id = self._get_reauth_entry().entry_id if self._reauth else None
+        taken: set[str] = set()
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.entry_id == current_id:
+                continue
+            for item in entry.data.get(CONF_METERING_POINTS, []):
+                if isinstance(item, dict) and item.get("metering_point_id"):
+                    taken.add(str(item["metering_point_id"]))
+        return taken
 
     def _unique_id_conflict(self, unique_id: str) -> ConfigEntry | None:
         existing = self.hass.config_entries.async_entry_for_domain_unique_id(
