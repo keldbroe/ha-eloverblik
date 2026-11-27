@@ -23,9 +23,13 @@
       },
       "metering_points": {
         "title": "Choose metering points",
-        "description": "Consumption is electricity bought from the grid. Export/sale is electricity delivered to the grid, for example from solar panels. Production (D01, D09) is everything the panels produce, including what you use yourself, so it is not the same as export. Other points, such as D12 total consumption or D14 electrical heating, overlap the grid points. Only grid points are preselected. If a parent point and its children are both listed, prefer the children (D07 for grid consumption and D06 for export) so the Energy dashboard does not count the same electricity twice. Points another ElOverblik entry already monitors are not listed.",
+        "description": "Consumption is electricity bought from the grid. Export/sale is electricity delivered to the grid, for example from solar panels. Production (D01, D09) is everything the panels produce, including what you use yourself, so it is not the same as export. Other points, such as D12 total consumption or D14 electrical heating, overlap the grid points. Only grid points are preselected. If a parent point and its children are both listed, prefer the children (D07 for grid consumption and D06 for export) so the Energy dashboard does not count the same electricity twice. Points another ElOverblik entry already monitors are not listed.\n\n{hidden}",
         "data": {
-          "metering_point_ids": "Metering points"
+          "metering_point_ids": "Metering points",
+          "show_all": "Show all metering points (not normally needed)"
+        },
+        "data_description": {
+          "show_all": "Normally you should not select the hidden points. Each one is a parent point (for example E17 or E18) that reports exactly the same values as its child point (D07 or D06), which is already listed. Selecting both gives you the same sensors twice, and the Energy dashboard can count the same electricity twice. Only tick this if you know you need that specific point."
         }
       }
     },
@@ -57,9 +61,13 @@
       },
       "metering_points": {
         "title": "Choose metering points",
-        "description": "Add or remove metering points. A point you remove loses its device and sensors, but the statistics already imported for it are kept. If two points report the same values (for example E17 and its D07 child, or E18 and D06), keep one of them so the same electricity is not counted twice. Points another ElOverblik entry monitors are not listed.",
+        "description": "Add or remove metering points. A point you remove loses its device and sensors, but the statistics already imported for it are kept. If two points report the same values (for example E17 and its D07 child, or E18 and D06), keep one of them so the same electricity is not counted twice. Points another ElOverblik entry monitors are not listed.\n\n{hidden}",
         "data": {
-          "metering_point_ids": "Metering points"
+          "metering_point_ids": "Metering points",
+          "show_all": "Show all metering points (not normally needed)"
+        },
+        "data_description": {
+          "show_all": "Normally you should not select the hidden points. Each one is a parent point (for example E17 or E18) that reports exactly the same values as its child point (D07 or D06), which is already listed. Selecting both gives you the same sensors twice, and the Energy dashboard can count the same electricity twice. Only tick this if you know you need that specific point."
         }
       },
       "settings": {

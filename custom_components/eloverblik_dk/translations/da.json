@@ -23,9 +23,13 @@
       },
       "metering_points": {
         "title": "Vælg målepunkter",
-        "description": "Forbrug er strøm købt fra nettet. Salg/eksport er strøm leveret til nettet, for eksempel fra solceller. Produktion (D01, D09) er alt hvad anlægget producerer, også det du selv bruger, så det er ikke det samme som salg. Andre målepunkter, som D12 samlet forbrug eller D14 elvarme, overlapper netmålepunkterne. Kun netmålepunkter er valgt på forhånd. Hvis både et overordnet målepunkt og dets undermålepunkter vises, så vælg undermålepunkterne (D07 til forbrug fra net og D06 til salg), så Energi-dashboardet ikke tæller den samme strøm med to gange. Målepunkter, som en anden ElOverblik-opsætning allerede bruger, vises ikke.",
+        "description": "Forbrug er strøm købt fra nettet. Salg/eksport er strøm leveret til nettet, for eksempel fra solceller. Produktion (D01, D09) er alt hvad anlægget producerer, også det du selv bruger, så det er ikke det samme som salg. Andre målepunkter, som D12 samlet forbrug eller D14 elvarme, overlapper netmålepunkterne. Kun netmålepunkter er valgt på forhånd. Hvis både et overordnet målepunkt og dets undermålepunkter vises, så vælg undermålepunkterne (D07 til forbrug fra net og D06 til salg), så Energi-dashboardet ikke tæller den samme strøm med to gange. Målepunkter, som en anden ElOverblik-opsætning allerede bruger, vises ikke.\n\n{hidden}",
         "data": {
-          "metering_point_ids": "Målepunkter"
+          "metering_point_ids": "Målepunkter",
+          "show_all": "Vis alle målepunkter (normalt ikke nødvendigt)"
+        },
+        "data_description": {
+          "show_all": "Normalt skal du ikke vælge de skjulte målepunkter. Hvert af dem er et overordnet målepunkt (for eksempel E17 eller E18), der viser præcis de samme tal som sit undermålepunkt (D07 eller D06), som allerede står på listen. Vælger du begge, får du de samme sensorer to gange, og Energi-dashboardet kan tælle den samme strøm med to gange. Sæt kun hak her, hvis du ved, at du har brug for netop det målepunkt."
         }
       }
     },
@@ -57,9 +61,13 @@
       },
       "metering_points": {
         "title": "Vælg målepunkter",
-        "description": "Tilføj eller fjern målepunkter. Et målepunkt du fjerner, mister sin enhed og sine sensorer, men den statistik der allerede er importeret, bevares. Hvis to målepunkter viser de samme tal (for eksempel E17 og dets D07, eller E18 og D06), så behold kun det ene, så den samme strøm ikke tælles to gange. Målepunkter, som en anden ElOverblik-opsætning bruger, vises ikke.",
+        "description": "Tilføj eller fjern målepunkter. Et målepunkt du fjerner, mister sin enhed og sine sensorer, men den statistik der allerede er importeret, bevares. Hvis to målepunkter viser de samme tal (for eksempel E17 og dets D07, eller E18 og D06), så behold kun det ene, så den samme strøm ikke tælles to gange. Målepunkter, som en anden ElOverblik-opsætning bruger, vises ikke.\n\n{hidden}",
         "data": {
-          "metering_point_ids": "Målepunkter"
+          "metering_point_ids": "Målepunkter",
+          "show_all": "Vis alle målepunkter (normalt ikke nødvendigt)"
+        },
+        "data_description": {
+          "show_all": "Normalt skal du ikke vælge de skjulte målepunkter. Hvert af dem er et overordnet målepunkt (for eksempel E17 eller E18), der viser præcis de samme tal som sit undermålepunkt (D07 eller D06), som allerede står på listen. Vælger du begge, får du de samme sensorer to gange, og Energi-dashboardet kan tælle den samme strøm med to gange. Sæt kun hak her, hvis du ved, at du har brug for netop det målepunkt."
         }
       },
       "settings": {

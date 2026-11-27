@@ -448,3 +448,136 @@ async def test_points_used_by_another_entry_are_not_offered(
     )
     assert blocked["type"] is FlowResultType.ABORT
     assert blocked["reason"] == "already_configured"
+
+
+async def test_setup_hides_points_that_repeat_another(
+    hass, fake_api, points, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At setup, a parent that repeats its child is neither shown nor selectable."""
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.eloverblik_dk.api import EnergyReading
+
+    now = datetime(2026, 11, 26, 12, tzinfo=UTC)
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.coordinator.current_time",
+        lambda tz: now.astimezone(tz),
+    )
+
+    def series(point_id: str, solar: bool) -> list:
+        start = now - timedelta(days=10)
+        return [
+            EnergyReading(
+                point_id,
+                start + timedelta(hours=i),
+                timedelta(hours=1),
+                (0.5 if 9 <= i % 24 <= 14 else 0.0) if solar else 0.3 + (i % 24) / 20,
+            )
+            for i in range(10 * 24)
+        ]
+
+    e17, d07, d06, e18 = (
+        CONSUMPTION_ID,
+        "571313174000000077",
+        EXPORT_ID,
+        "571313174000000018",
+    )
+    fake_api.readings = [
+        *series(e17, False),
+        *series(d07, False),
+        *series(e18, True),
+        *series(d06, True),
+    ]
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    form = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: "refresh-token"}
+    )
+    assert form["step_id"] == "metering_points"
+    # One extra call compared the last month of every point.
+    assert len(fake_api.calls) == 1
+
+    def offered(step) -> set[str]:
+        selector = step["data_schema"].schema[CONF_METERING_POINT_IDS]
+        return {option["value"] for option in selector.config["options"]}
+
+    assert e17 not in offered(form)
+    assert e18 not in offered(form)
+    assert {d07, d06} <= offered(form)
+    hidden = form["description_placeholders"]["hidden"]
+    assert "E17" in hidden and "E18" in hidden
+
+    # A hidden point cannot be picked without "show all": the form rejects it.
+    with pytest.raises(InvalidData):
+        await hass.config_entries.flow.async_configure(
+            form["flow_id"], {CONF_METERING_POINT_IDS: [d07, e17]}
+        )
+    created = await hass.config_entries.flow.async_configure(
+        form["flow_id"], {CONF_METERING_POINT_IDS: [d07, d06]}
+    )
+    assert created["type"] is FlowResultType.CREATE_ENTRY
+    data = created["data"][CONF_METERING_POINTS]
+    assert {item["metering_point_id"] for item in data} == {d07, d06}
+
+
+async def test_show_all_brings_hidden_points_back_at_setup(
+    hass, fake_api, points, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ticking "show all" lists every point, marked with what it repeats."""
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.eloverblik_dk.api import EnergyReading
+    from custom_components.eloverblik_dk.const import CONF_SHOW_ALL
+
+    now = datetime(2026, 11, 26, 12, tzinfo=UTC)
+    monkeypatch.setattr(
+        "custom_components.eloverblik_dk.coordinator.current_time",
+        lambda tz: now.astimezone(tz),
+    )
+    start = now - timedelta(days=10)
+    fake_api.readings = [
+        EnergyReading(pid, start + timedelta(hours=i), timedelta(hours=1), 0.4 + i % 3)
+        for pid in (CONSUMPTION_ID, "571313174000000077")
+        for i in range(10 * 24)
+    ]
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    form = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: "refresh-token"}
+    )
+    shown = await hass.config_entries.flow.async_configure(
+        form["flow_id"],
+        {CONF_METERING_POINT_IDS: ["571313174000000077"], CONF_SHOW_ALL: True},
+    )
+    assert shown["type"] is FlowResultType.FORM
+    selector = shown["data_schema"].schema[CONF_METERING_POINT_IDS]
+    labels = {o["value"]: o["label"] for o in selector.config["options"]}
+    assert labels[CONSUMPTION_ID].endswith("same values as D07")
+    created = await hass.config_entries.flow.async_configure(
+        shown["flow_id"],
+        {
+            CONF_METERING_POINT_IDS: [CONSUMPTION_ID, "571313174000000077"],
+            CONF_SHOW_ALL: True,
+        },
+    )
+    assert created["type"] is FlowResultType.CREATE_ENTRY
+    stored = {
+        item["metering_point_id"] for item in created["data"][CONF_METERING_POINTS]
+    }
+    assert stored == {CONSUMPTION_ID, "571313174000000077"}
+
+
+async def test_failed_comparison_shows_every_point(hass, fake_api) -> None:
+    """If the month cannot be downloaded, nothing is hidden."""
+    fake_api.series_error = RuntimeError("down")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    form = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_REFRESH_TOKEN: "refresh-token"}
+    )
+    selector = form["data_schema"].schema[CONF_METERING_POINT_IDS]
+    assert len(selector.config["options"]) == 8
+    assert form["description_placeholders"]["hidden"] == ""

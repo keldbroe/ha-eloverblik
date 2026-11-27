@@ -70,7 +70,9 @@ A metering point that another ElOverblik entry already monitors is not offered a
 
 DataHub often reports exactly the same hourly values for a parent and its child, for example `E17` and its `D07`, or `E18` and `D06`. Two devices then show the same numbers, and adding both to the Energy dashboard counts the same electricity twice.
 
-The integration compares the selected points of the same kind over the last month. When two of them match hour for hour for at least a week, a warning appears under **Settings → Repairs**. It names the point to keep and the one to drop. **Fix** drops it. The child point (`D07`, `D06`) is kept, because it is the specific grid measurement and usually has the longer history. If the points later start to differ, the warning goes away on its own. Hours with no export, such as winter nights, are not counted as a match.
+**Normally you should not select both.** At setup, and on the **Metering points** options page, the integration downloads the last month (one extra request) and hides a point that reports exactly the same values as another one. The form says which points are hidden. Tick **Show all metering points** only if you know you need that specific point. The hidden points are then listed again, marked "same values as D07" (or D06).
+
+For points that are already selected, the integration also compares the selected points of the same kind over the last month. When two of them match hour for hour for at least a week, a warning appears under **Settings → Repairs**. It names the point to keep and the one to drop. **Fix** drops it. The child point (`D07`, `D06`) is kept, because it is the specific grid measurement and usually has the longer history. If the points later start to differ, the warning goes away on its own. Hours with no export, such as winter nights, are not counted as a match.
 
 ### Options
 

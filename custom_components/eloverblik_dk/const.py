@@ -23,6 +23,7 @@ CONF_METERING_POINT_IDS = "metering_point_ids"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
 CONF_HISTORY_DAYS = "history_days"
 CONF_IMPORT_STATISTICS = "import_statistics"
+CONF_SHOW_ALL = "show_all"
 
 DEFAULT_SCAN_INTERVAL_HOURS = 6
 MIN_SCAN_INTERVAL_HOURS = 1

@@ -5,7 +5,7 @@
 ### Changed
 
 - The metering point lists show the DataHub type, for example **Forbrug (D07)** and **Forbrug (E17)**. Before, a parent and its child looked the same.
-- On the **Metering points** options page, a point that reports the same values as another is marked, for example **samme tal som D07**, so it is clear which one to remove.
+- **Points that repeat another point are hidden.** At setup and on the **Metering points** options page, the last month is downloaded (one extra request), and a point with exactly the same values as another, such as `E17` next to `D07` or `E18` next to `D06`, is neither shown nor selectable. The form says which points are hidden and that you normally should not select them. **Show all metering points** lists them again, marked for example **samme tal som D07**. If the month cannot be downloaded, nothing is hidden.
 
 ## 0.3.1
 
